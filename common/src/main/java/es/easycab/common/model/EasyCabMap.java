@@ -1,110 +1,140 @@
 package es.easycab.common.model;
 
-import java.io.Serializable; // Podría no ser necesario si solo es para uso interno
-import java.util.List;
-import java.util.ArrayList;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.Map;
 
 public class EasyCabMap {
-    private int width;
-    private int height;
-    private char[][] grid; // 'T' para taxi, 'C' para cliente, '.' para vacío, '#' para obstáculo
+    public static final int MAP_SIZE = 20;
+    private Cell[][] grid;
+    private ConcurrentHashMap<String, Taxi> taxis;
+    private ConcurrentHashMap<String, Location> customers;
+    private ConcurrentHashMap<String, Location> destinations;
 
-    // Un mapa para la posición de los taxis para fácil acceso
-    private ConcurrentHashMap<String, Location> taxiLocations;
-    private ConcurrentHashMap<String, Location> customerLocations;
-
-    public EasyCabMap(int width, int height) {
-        this.width = width;
-        this.height = height;
-        this.grid = new char[height][width];
+    public EasyCabMap() {
+        this.grid = new Cell[MAP_SIZE][MAP_SIZE];
+        this.taxis = new ConcurrentHashMap<>();
+        this.customers = new ConcurrentHashMap<>();
+        this.destinations = new ConcurrentHashMap<>();
         initializeGrid();
-        this.taxiLocations = new ConcurrentHashMap<>();
-        this.customerLocations = new ConcurrentHashMap<>();
     }
 
     private void initializeGrid() {
-        for (int i = 0; i < height; i++) {
-            for (int j = 0; j < width; j++) {
-                grid[i][j] = '.'; // Inicializa todo como vacío
+        for (int i = 0; i < MAP_SIZE; i++) {
+            for (int j = 0; j < MAP_SIZE; j++) {
+                grid[i][j] = new Cell();
             }
         }
-        // Opcional: añadir algunos obstáculos fijos para probar
-        // grid[5][5] = '#';
     }
 
-    public int getWidth() {
-        return width;
+    // Esférico: wrap de coordenadas
+    private int wrap(int v) {
+        return (v + MAP_SIZE) % MAP_SIZE;
     }
 
-    public int getHeight() {
-        return height;
+    public void updateTaxi(String taxiId, int x, int y, boolean moving) {
+        x = wrap(x);
+        y = wrap(y);
+        Taxi taxi = new Taxi(taxiId, moving);
+        taxis.put(taxiId, taxi);
+        grid[y][x].taxi = taxi;
     }
 
-    public void updateTaxiLocation(String taxiId, Location oldLoc, Location newLoc) {
-        if (oldLoc != null && isValidLocation(oldLoc)) {
-            grid[oldLoc.getY()][oldLoc.getX()] = '.'; // Limpia la posición antigua
-        }
-        if (isValidLocation(newLoc)) {
-            grid[newLoc.getY()][newLoc.getX()] = 'T'; // Marca la nueva posición del taxi
-            taxiLocations.put(taxiId, newLoc);
-        }
-    }
-
-    public void updateCustomerLocation(String customerId, Location oldLoc, Location newLoc) {
-        if (oldLoc != null && isValidLocation(oldLoc)) {
-            grid[oldLoc.getY()][oldLoc.getX()] = '.'; // Limpia la posición antigua
-        }
-        if (isValidLocation(newLoc)) {
-            grid[newLoc.getY()][newLoc.getX()] = 'C'; // Marca la nueva posición del cliente
-            customerLocations.put(customerId, newLoc);
+    public void removeTaxi(String taxiId) {
+        Taxi taxi = taxis.remove(taxiId);
+        if (taxi != null) {
+            for (int i = 0; i < MAP_SIZE; i++) {
+                for (int j = 0; j < MAP_SIZE; j++) {
+                    if (grid[i][j].taxi != null && grid[i][j].taxi.id.equals(taxiId)) {
+                        grid[i][j].taxi = null;
+                    }
+                }
+            }
         }
     }
 
-    public void removeTaxi(String taxiId, Location loc) {
-        if (isValidLocation(loc)) {
-            grid[loc.getY()][loc.getX()] = '.';
+    public void updateCustomer(String customerId, int x, int y) {
+        x = wrap(x);
+        y = wrap(y);
+        Location loc = new Location(x, y);
+        customers.put(customerId, loc);
+        grid[y][x].customerId = customerId;
+    }
+
+    public void removeCustomer(String customerId) {
+        Location loc = customers.remove(customerId);
+        if (loc != null) {
+            grid[loc.getY()][loc.getX()].customerId = null;
         }
-        taxiLocations.remove(taxiId);
     }
 
-    public void removeCustomer(String customerId, Location loc) {
-        if (isValidLocation(loc)) {
-            grid[loc.getY()][loc.getX()] = '.';
+    public void addDestination(String destId, int x, int y) {
+        x = wrap(x);
+        y = wrap(y);
+        Location loc = new Location(x, y);
+        destinations.put(destId, loc);
+        grid[y][x].destinationId = destId;
+    }
+
+    public void removeDestination(String destId) {
+        Location loc = destinations.remove(destId);
+        if (loc != null) {
+            grid[loc.getY()][loc.getX()].destinationId = null;
         }
-        customerLocations.remove(customerId);
     }
 
-    public boolean isValidLocation(Location loc) {
-        return loc.getX() >= 0 && loc.getX() < width &&
-                loc.getY() >= 0 && loc.getY() < height;
-    }
-
-    public char getCell(int x, int y) {
-        if (isValidLocation(new Location(x, y))) {
-            return grid[y][x];
+    // Representación de la celda según reglas
+    public String getCellDisplay(int x, int y) {
+        x = wrap(x);
+        y = wrap(y);
+        Cell cell = grid[y][x];
+        if (cell.taxi != null) {
+            // Taxi: id y color (verde=moving, rojo=stopped)
+            String color = cell.taxi.moving ? "[VERDE]" : "[ROJO]";
+            return color + cell.taxi.id;
         }
-        return ' '; // Fuera de límites
+        if (cell.destinationId != null) {
+            // Destino: mayúscula, fondo azul
+            return "[AZUL]" + cell.destinationId.toUpperCase();
+        }
+        if (cell.customerId != null) {
+            // Cliente: minúscula, fondo amarillo
+            return "[AMARILLO]" + cell.customerId.toLowerCase();
+        }
+        return " "; // Nada
     }
 
-    public ConcurrentHashMap<String, Location> getTaxiLocations() {
-        return taxiLocations;
-    }
-
-    public ConcurrentHashMap<String, Location> getCustomerLocations() {
-        return customerLocations;
-    }
-
-    // Método para una representación en String, útil para la consola
+    // Mapa completo en string
     public String toConsoleString() {
         StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < height; i++) {
-            for (int j = 0; j < width; j++) {
-                sb.append(grid[i][j]).append(" ");
+        for (int i = 0; i < MAP_SIZE; i++) {
+            for (int j = 0; j < MAP_SIZE; j++) {
+                sb.append(getCellDisplay(j, i)).append(" ");
             }
             sb.append("\n");
         }
         return sb.toString();
+    }
+
+    // Clases auxiliares
+    public static class Cell {
+        Taxi taxi;
+        String customerId;
+        String destinationId;
+    }
+
+    public static class Taxi {
+        String id;
+        boolean moving; // true=verde, false=rojo
+        public Taxi(String id, boolean moving) {
+            this.id = id;
+            this.moving = moving;
+        }
+    }
+
+    public static class Location {
+        private int x, y;
+        public Location(int x, int y) { this.x = x; this.y = y; }
+        public int getX() { return x; }
+        public int getY() { return y; }
     }
 }
