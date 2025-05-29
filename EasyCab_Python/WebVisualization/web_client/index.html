@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EasyCab - Visualización del Mapa</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>EasyCab - Vista del Mapa</h1>
+        <div id="map-container">
+            </div>
+        <div class="legend">
+            <h3>Leyenda:</h3>
+            <ul>
+                <li><span class="legend-char location-char">A</span>: Ubicación de la Ciudad</li>
+                <li><span class="legend-char customer-char">c</span>: Cliente (punto de recogida)</li>
+                <li><span class="legend-char taxi-free">T1</span>: Taxi Libre (verde)</li>
+                <li><span class="legend-char taxi-moving">T1</span>: Taxi en Servicio (azul)</li>
+                <li><span class="legend-char taxi-disabled">T1</span>: Taxi Deshabilitado (rojo)</li>
+                <li><span class="legend-char taxi-picked-up">T1</span>: Taxi con Cliente (naranja)</li>
+            </ul>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>

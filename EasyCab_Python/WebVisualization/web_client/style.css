@@ -1,0 +1,156 @@
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: #282c34;
+    color: #e0e0e0;
+    margin: 0;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start; /* Alinea arriba */
+    min-height: 100vh;
+    padding: 20px;
+    box-sizing: border-box;
+}
+
+.container {
+    background-color: #3a3f4a;
+    padding: 30px;
+    border-radius: 10px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+    text-align: center;
+    width: 90%;
+    max-width: 800px;
+}
+
+h1 {
+    color: #61dafb;
+    margin-bottom: 25px;
+}
+
+#map-container {
+    display: inline-block; /* Para que el fondo oscuro no ocupe todo el ancho */
+    background-color: #1a1a1a;
+    border: 2px solid #555;
+    padding: 10px;
+    margin-bottom: 20px;
+    font-family: 'Consolas', 'Monaco', monospace; /* Fuente monoespaciada para el mapa */
+    font-size: 1.2em;
+    line-height: 1.2;
+    white-space: pre; /* Mantiene los espacios y saltos de línea */
+    text-align: left; /* Alinea el contenido del mapa a la izquierda */
+    border-radius: 5px;
+    overflow: auto; /* Para mapas grandes, permitirá scroll */
+}
+
+/* Estilos de las celdas del mapa */
+.map-cell {
+    display: inline-block;
+    width: 30px; /* Ancho fijo para cada celda */
+    height: 30px; /* Alto fijo para cada celda */
+    text-align: center;
+    vertical-align: middle;
+    line-height: 30px; /* Centra el texto verticalmente */
+    border-radius: 3px;
+    margin: 1px; /* Pequeño margen entre celdas */
+    box-sizing: border-box; /* Incluye padding y border en el tamaño total */
+    font-weight: bold;
+}
+
+.empty {
+    background-color: #1a1a1a;
+    color: #555;
+}
+
+.location {
+    background-color: #007bff; /* Azul */
+    color: white;
+}
+
+.customer {
+    background-color: #ffc107; /* Amarillo */
+    color: #333;
+}
+
+.taxi-free {
+    background-color: #28a745; /* Verde */
+    color: white;
+}
+
+.taxi-moving {
+    background-color: #17a2b8; /* Cyan/Azul claro */
+    color: white;
+}
+
+.taxi-disabled {
+    background-color: #dc3545; /* Rojo */
+    color: white;
+}
+
+.taxi-picked-up {
+    background-color: #fd7e14; /* Naranja */
+    color: white;
+}
+
+/* Leyenda */
+.legend {
+    background-color: #2d313a;
+    padding: 15px;
+    border-radius: 8px;
+    margin-top: 20px;
+    text-align: left;
+}
+
+.legend h3 {
+    color: #61dafb;
+    margin-bottom: 10px;
+}
+
+.legend ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+    justify-content: center;
+}
+
+.legend li {
+    display: flex;
+    align-items: center;
+    font-size: 0.9em;
+}
+
+.legend-char {
+    display: inline-block;
+    width: 25px;
+    height: 25px;
+    line-height: 25px;
+    text-align: center;
+    border-radius: 3px;
+    margin-right: 8px;
+    font-weight: bold;
+    color: white; /* Color de texto por defecto para legend items */
+}
+
+.legend-char.location-char {
+    background-color: #007bff;
+}
+
+.legend-char.customer-char {
+    background-color: #ffc107;
+    color: #333; /* Texto oscuro para fondo claro */
+}
+
+/* Usar las mismas clases de estilo para los ejemplos de la leyenda que para las celdas del mapa */
+.legend-char.taxi-free {
+    background-color: #28a745;
+}
+.legend-char.taxi-moving {
+    background-color: #17a2b8;
+}
+.legend-char.taxi-disabled {
+    background-color: #dc3545;
+}
+.legend-char.taxi-picked-up {
+    background-color: #fd7e14;
+}
