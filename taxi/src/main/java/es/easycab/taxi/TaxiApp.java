@@ -241,8 +241,9 @@ public class TaxiApp {
                     // Cambiar el estado del taxi a EN_ROUTE_TO_PICKUP
                     taxi.setStatus(Taxi.TaxiStatus.EN_ROUTE_TO_PICKUP);
 
+                    // Replace 'getTripId()' with the correct method or field for trip ID
                     outToCentral.writeObject(ProtocolConstants.CMD_TRIP_ACKNOWLEDGED + ":" + taxi.getId() + ":"
-                            + assignedTrip.getTripId());
+                            + assignedTrip.toString());
                     outToCentral.flush();
                 }
             }
