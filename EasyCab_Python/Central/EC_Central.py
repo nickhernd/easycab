@@ -120,11 +120,54 @@ def process_taxi_movement_messages():
             x = msg_value["data"]["x"]
             y = msg_value["data"]["y"]
             status = msg_value["data"]["status"]
-            
+
             if taxi_id in TAXI_FLEET:
-                TAXI_FLEET[taxi_id]["x"] = x
-                TAXI_FLEET[taxi_id]["y"] = y
-                TAXI_FLEET[taxi_id]["status"] = status
+                taxi = TAXI_FLEET[taxi_id]
+                taxi["x"] = x
+                taxi["y"] = y
+                taxi["status"] = status
+
+                # Si está yendo a recoger al cliente y ha llegado
+                if status == "moving_to_customer" and taxi["current_destination_coords"] and \
+                   (x, y) == (taxi["current_destination_coords"]["x"], taxi["current_destination_coords"]["y"]):
+                    client_id = taxi["service_id"]
+                    destination_id = CUSTOMER_REQUESTS[client_id]["destination_id"]
+                    final_destination_coords = CITY_MAP[destination_id]
+                    # Cambia el estado del taxi
+                    taxi["status"] = "moving_to_destination"
+                    taxi["current_destination_coords"] = final_destination_coords
+
+                    # Manda comando para ir al destino
+                    taxi_command_msg = MessageProtocol.create_taxi_command(
+                        taxi_id=taxi_id, command="GOTO_DEST", new_destination_coords=final_destination_coords, client_id=client_id, final_destination_id=destination_id
+                    )
+                    send_central_update('taxi_commands', MessageProtocol.parse_message(taxi_command_msg))
+
+                # Si está yendo al destino y ha llegado
+                elif status == "moving_to_destination" and taxi["current_destination_coords"] and \
+                     (x, y) == (taxi["current_destination_coords"]["x"], taxi["current_destination_coords"]["y"]):
+                    client_id = taxi["service_id"]
+                    # Notifica servicio completado
+                    service_completed_msg = MessageProtocol.create_service_completed(
+                        client_id=client_id, taxi_id=taxi_id, destination_id=CUSTOMER_REQUESTS[client_id]["destination_id"]
+                    )
+                    send_central_update('service_notifications', MessageProtocol.parse_message(service_completed_msg))
+
+                    # Cambia el estado del taxi y manda a base
+                    taxi["status"] = "returning_to_base"
+                    taxi["current_destination_coords"] = CITY_MAP["A"] # Asume que la base es "A"
+                    taxi["service_id"] = None
+
+                    taxi_command_msg = MessageProtocol.create_taxi_command(
+                        taxi_id=taxi_id, command="RETURN_TO_BASE", new_destination_coords=CITY_MAP["A"]
+                    )
+                    send_central_update('taxi_commands', MessageProtocol.parse_message(taxi_command_msg))
+
+                # Si está volviendo a base y ha llegado
+                elif status == "returning_to_base" and taxi["current_destination_coords"] and \
+                     (x, y) == (taxi["current_destination_coords"]["x"], taxi["current_destination_coords"]["y"]):
+                    taxi["status"] = "free"
+                    taxi["current_destination_coords"] = None
             else:
                 print(f"Advertencia: Movimiento de taxi no registrado: {taxi_id}")
 
@@ -197,15 +240,14 @@ def process_customer_request_messages():
 def assign_taxi_to_request(client_id, destination_id):
     """Intenta asignar un taxi libre a una solicitud de cliente."""
     assigned = False
-    client_origin_coords = CUSTOMER_REQUESTS[client_id]["origin_coords"] 
-    final_destination_coords = CITY_MAP[destination_id] 
-
+    client_origin_coords = CUSTOMER_REQUESTS[client_id]["origin_coords"]
+    final_destination_coords = CITY_MAP[destination_id]
 
     for taxi_id, taxi_data in TAXI_FLEET.items():
         if taxi_data["status"] == "free":
-            TAXI_FLEET[taxi_id]["status"] = "moving_to_customer" 
-            TAXI_FLEET[taxi_id]["service_id"] = client_id 
-            TAXI_FLEET[taxi_id]["current_destination_coords"] = client_origin_coords 
+            TAXI_FLEET[taxi_id]["status"] = "moving_to_customer"
+            TAXI_FLEET[taxi_id]["service_id"] = client_id
+            TAXI_FLEET[taxi_id]["current_destination_coords"] = client_origin_coords
             CUSTOMER_REQUESTS[client_id]["assigned_taxi_id"] = taxi_id
             CUSTOMER_REQUESTS[client_id]["status"] = "assigned"
 
@@ -217,30 +259,13 @@ def assign_taxi_to_request(client_id, destination_id):
             send_central_update('service_notifications', MessageProtocol.parse_message(notification_msg))
 
             taxi_command_msg = MessageProtocol.create_taxi_command(
-                taxi_id=taxi_id, command="PICKUP", new_destination_coords=client_origin_coords, client_id=client_id, final_destination_id=destination_id 
+                taxi_id=taxi_id, command="PICKUP", new_destination_coords=client_origin_coords, client_id=client_id, final_destination_id=destination_id
             )
             send_central_update('taxi_commands', MessageProtocol.parse_message(taxi_command_msg))
 
             assigned = True
             break
-    
-    for taxi_id, taxi_data in TAXI_FLEET.items():
 
-            print(f"Asignado Taxi {taxi_id} a cliente {client_id}. Taxi va a llevar a {client_id} a destino final: {destination_id} ({final_destination_coords['x']},{final_destination_coords['y']})")
-
-            notification_msg = MessageProtocol.create_service_notification(
-                client_id=client_id, status=MessageProtocol.STATUS_OK, taxi_id=taxi_id, message=f"Servicio aceptado. Taxi {taxi_id} en camino a recogerle."
-            )
-            send_central_update('service_notifications', MessageProtocol.parse_message(notification_msg))
-
-            taxi_command_msg = MessageProtocol.create_taxi_command(
-                taxi_id=taxi_id, command="GOTO_DEST", new_destination_coords=final_destination_coords, client_id=client_id, final_destination_id=destination_id 
-            )
-            send_central_update('taxi_commands', MessageProtocol.parse_message(taxi_command_msg))
-
-            assigned = True
-            break
-    
     if not assigned:
         print(f"No hay taxis libres para la solicitud del cliente {client_id}. Enviando notificación KO.")
         notification_msg = MessageProtocol.create_service_notification(

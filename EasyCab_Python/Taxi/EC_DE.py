@@ -230,14 +230,13 @@ def process_taxi_commands():
                         status = "free" # o reanudar al estado anterior si tenía un servicio
                         print(f"Taxi {TAXI_ID}: Reanudando operaciones.")
                         send_current_position() # Notificar a la Central el cambio de estado
-                elif command == "RETURN_TO_BASE":
-                    target_x, target_y = 1, 1 
-                    status = "moving_to_base"
+                elif command == "RETURN_TO_BASE" and new_destination_coords:
+                    target_x, target_y = new_destination_coords["x"], new_destination_coords["y"]
+                    status = "returning_to_base"
                     assigned_service_id = None
                     final_destination_id = None
                     print(f"Taxi {TAXI_ID}: Regresando a base en ({target_x},{target_y}).")
-                    send_current_position() # Notificar a la Central el cambio de estado
-
+                    send_current_position()
 def process_map_updates():
     """Escucha y procesa actualizaciones del mapa de la Central."""
     global current_city_map, current_taxi_fleet_state, current_customer_requests_state

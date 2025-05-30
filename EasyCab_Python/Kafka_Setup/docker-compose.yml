@@ -17,7 +17,7 @@ services:
     hostname: kafka
     container_name: kafka
     ports:
-      - "9094:9096"
+      - "9094:9094"
       - "29092:29092"
     environment:
       KAFKA_BROKER_ID: 1
