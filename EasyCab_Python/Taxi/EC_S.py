@@ -17,8 +17,9 @@ from common.message_protocol import MessageProtocol
 # --- Configuración del Sensor ---
 # El ID del taxi al que está asociado este sensor
 TAXI_ID = int(sys.argv[1]) if len(sys.argv) > 1 else 1
-KAFKA_BROKER = 'localhost:9092' # Dirección del broker de Kafka
+KAFKA_BROKER = 'localhost:9094' # Dirección del broker de Kafka
 SENSOR_UPDATE_INTERVAL = 1 # Intervalo de envío de datos del sensor en segundos
+IP_PORT_ECDE = 'localhost:9095'
 
 # --- Estado del Sensor ---
 current_sensor_status = MessageProtocol.STATUS_OK # Inicialmente OK

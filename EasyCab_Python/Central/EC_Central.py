@@ -19,7 +19,7 @@ from common.message_protocol import MessageProtocol
 # --- Configuración General ---
 CENTRAL_HOST = '0.0.0.0' # Escucha en todas las interfaces disponibles
 CENTRAL_PORT_AUTH = 65432 # Puerto para autenticación de taxis (via sockets)
-KAFKA_BROKER = 'localhost:9092' # Dirección del broker de Kafka
+KAFKA_BROKER = 'localhost:9094' # Dirección del broker de Kafka
 MAP_UPDATE_INTERVAL = 2 # Segundos entre cada actualización del mapa
 
 # --- Estructuras de datos globales (simulando una base de datos) ---
@@ -155,7 +155,7 @@ def process_customer_request_messages():
             client_id = msg_value["data"]["client_id"]
             destination_id = msg_value["data"]["destination_id"]
             
-            client_origin_id = 'A' # Asumiendo 'A' como origen por defecto para el cliente. ¡Ajustar si el protocolo cliente envía origen!
+            client_origin_id =  'a'  # Asignar un origen por defecto
             
             if client_origin_id not in CITY_MAP:
                 print(f"Error: Origen del cliente '{client_origin_id}' no encontrado en el mapa.")
@@ -180,9 +180,12 @@ def process_customer_request_messages():
                     "destination_id": destination_id,
                     "assigned_taxi_id": None,
                     "status": "pending",
-                    "origin_coords": CITY_MAP[client_origin_id] 
+                    "origin_coords": CITY_MAP[client_origin_id]
                 }
+
                 assign_taxi_to_request(client_id, destination_id)
+
+
             else:
                 print(f"Cliente {client_id} ya tiene una solicitud {CUSTOMER_REQUESTS[client_id]['status']}.")
                 notification_msg = MessageProtocol.create_service_notification(
@@ -196,6 +199,7 @@ def assign_taxi_to_request(client_id, destination_id):
     assigned = False
     client_origin_coords = CUSTOMER_REQUESTS[client_id]["origin_coords"] 
     final_destination_coords = CITY_MAP[destination_id] 
+
 
     for taxi_id, taxi_data in TAXI_FLEET.items():
         if taxi_data["status"] == "free":
@@ -214,6 +218,23 @@ def assign_taxi_to_request(client_id, destination_id):
 
             taxi_command_msg = MessageProtocol.create_taxi_command(
                 taxi_id=taxi_id, command="PICKUP", new_destination_coords=client_origin_coords, client_id=client_id, final_destination_id=destination_id 
+            )
+            send_central_update('taxi_commands', MessageProtocol.parse_message(taxi_command_msg))
+
+            assigned = True
+            break
+    
+    for taxi_id, taxi_data in TAXI_FLEET.items():
+
+            print(f"Asignado Taxi {taxi_id} a cliente {client_id}. Taxi va a llevar a {client_id} a destino final: {destination_id} ({final_destination_coords['x']},{final_destination_coords['y']})")
+
+            notification_msg = MessageProtocol.create_service_notification(
+                client_id=client_id, status=MessageProtocol.STATUS_OK, taxi_id=taxi_id, message=f"Servicio aceptado. Taxi {taxi_id} en camino a recogerle."
+            )
+            send_central_update('service_notifications', MessageProtocol.parse_message(notification_msg))
+
+            taxi_command_msg = MessageProtocol.create_taxi_command(
+                taxi_id=taxi_id, command="GOTO_DEST", new_destination_coords=final_destination_coords, client_id=client_id, final_destination_id=destination_id 
             )
             send_central_update('taxi_commands', MessageProtocol.parse_message(taxi_command_msg))
 
@@ -320,6 +341,7 @@ def main():
     threading.Thread(target=process_sensor_data_messages, daemon=True).start()
     threading.Thread(target=process_customer_request_messages, daemon=True).start()
     threading.Thread(target=process_service_completed_messages, daemon=True).start()
+
     # NUEVO: Hilo para enviar actualizaciones del mapa
     threading.Thread(target=send_map_updates_periodically, daemon=True).start()
 

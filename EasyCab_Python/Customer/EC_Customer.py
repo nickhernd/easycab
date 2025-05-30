@@ -16,7 +16,7 @@ from common.message_protocol import MessageProtocol
 
 # --- Configuración del Cliente ---
 CLIENT_ID = sys.argv[1] if len(sys.argv) > 1 else "client_A" # ID del cliente
-KAFKA_BROKER = 'localhost:9092' # Dirección del broker de Kafka
+KAFKA_BROKER = 'localhost:9094' # Dirección del broker de Kafka
 REQUESTS_FILE = 'Customer/customer_requests.txt' # Archivo de solicitudes
 
 # --- Estado del Cliente ---
@@ -68,7 +68,10 @@ def load_customer_requests(file_path):
             for line in f:
                 parts = line.strip().split()
                 if len(parts) == 2 and parts[0] == CLIENT_ID:
-                    requests.append({"client_id": parts[0], "destination_id": parts[1]})
+                    destination_id = parts[1]
+                    client_id = parts[0]
+                    requests.append({"client_id": client_id, "destination_id": destination_id})
+ 
         print(f"Cliente {CLIENT_ID}: Solicitudes cargadas: {requests}")
     except FileNotFoundError:
         print(f"Error: Archivo de solicitudes '{file_path}' no encontrado.")
@@ -115,7 +118,7 @@ def process_map_updates():
             current_city_map = msg_value["data"]["city_map"]
             current_taxi_fleet_state = msg_value["data"]["taxi_fleet"]
             current_customer_requests_state = msg_value["data"]["customer_requests"]
-            draw_map() # Dibujar el mapa cada vez que llega una actualización
+            draw_map() 
 
 def clear_console():
     """Limpia la consola."""

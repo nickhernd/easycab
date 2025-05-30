@@ -20,7 +20,9 @@ from common.message_protocol import MessageProtocol
 TAXI_ID = int(sys.argv[1]) if len(sys.argv) > 1 else 1 # ID del taxi, pasado como argumento
 CENTRAL_HOST = 'localhost' # La IP o hostname de la máquina donde corre EC_Central
 CENTRAL_PORT_AUTH = 65432 # Puerto para autenticación de la Central
-KAFKA_BROKER = 'localhost:9092' # Dirección del broker de Kafka
+KAFKA_BROKER = 'localhost:9094' # Dirección del broker de Kafka
+IP_PORT_ECS = 'localhost:9096'
+
 
 # --- Estado del Taxi ---
 current_x = 0
@@ -331,7 +333,7 @@ def main():
 
     while True:
         simulate_movement()
-        simulate_sensor_data()
+        #simulate_sensor_data()
         time.sleep(1) # Espera 1 segundo para el siguiente paso de simulación
 
 if __name__ == "__main__":
