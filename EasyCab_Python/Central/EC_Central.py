@@ -22,6 +22,12 @@ CENTRAL_PORT_AUTH = 65432 # Puerto para autenticación de taxis (via sockets)
 KAFKA_BROKER = 'localhost:9094' # Dirección del broker de Kafka
 MAP_UPDATE_INTERVAL = 2 # Segundos entre cada actualización del mapa
 
+MAP_SIZE = 20
+
+def wrap_position(x, y):
+    """Devuelve las coordenadas ajustadas para la geometría esférica."""
+    return x % MAP_SIZE, y % MAP_SIZE
+
 # --- Estructuras de datos globales (simulando una base de datos) ---
 # { "ID_LOCALIZACION": {"x": int, "y": int} }
 CITY_MAP = {}
@@ -94,7 +100,11 @@ def load_taxi_fleet():
                     taxi_id = int(parts[0])
                     x, y = int(parts[1]), int(parts[2])
                     status = parts[3]
-                    TAXI_FLEET[taxi_id] = {"x": x, "y": y, "status": status, "service_id": None, "current_destination_coords": None}
+                    TAXI_FLEET[taxi_id] = {
+                        "x": x, "y": y, "status": status, "service_id": None,
+                        "current_destination_coords": None,
+                        "initial_x": x, "initial_y": y  # Guarda la posición inicial
+                    }
         print(f"Flota de taxis cargada: {TAXI_FLEET}")
     except FileNotFoundError:
         print("Error: taxis_available.txt no encontrado.")
@@ -128,20 +138,23 @@ def process_taxi_movement_messages():
                 taxi["status"] = status
 
                 # Si está yendo a recoger al cliente y ha llegado
-                if status == "moving_to_customer" and taxi["current_destination_coords"] and \
-                   (x, y) == (taxi["current_destination_coords"]["x"], taxi["current_destination_coords"]["y"]):
+                if status == "moving_to_customer" and taxi["service_id"]:
                     client_id = taxi["service_id"]
-                    destination_id = CUSTOMER_REQUESTS[client_id]["destination_id"]
-                    final_destination_coords = CITY_MAP[destination_id]
-                    # Cambia el estado del taxi
-                    taxi["status"] = "moving_to_destination"
-                    taxi["current_destination_coords"] = final_destination_coords
-
-                    # Manda comando para ir al destino
-                    taxi_command_msg = MessageProtocol.create_taxi_command(
-                        taxi_id=taxi_id, command="GOTO_DEST", new_destination_coords=final_destination_coords, client_id=client_id, final_destination_id=destination_id
-                    )
-                    send_central_update('taxi_commands', MessageProtocol.parse_message(taxi_command_msg))
+                    client_coords = CUSTOMER_REQUESTS[client_id]["origin_coords"]
+                    if (x, y) == (client_coords["x"], client_coords["y"]):
+                        destination_id = CUSTOMER_REQUESTS[client_id]["destination_id"]
+                        final_destination_coords = CITY_MAP[destination_id]
+                        print(f"Taxi {taxi_id} ha recogido al cliente {client_id} en ({x},{y}). Enviando comando para ir al destino final {destination_id} ({final_destination_coords['x']},{final_destination_coords['y']})")
+                        # Cambia el estado del taxi
+                        taxi["status"] = "moving_to_destination"
+                        taxi["current_destination_coords"] = final_destination_coords
+                        # Cambia el estado del cliente (opcional, para trazabilidad)
+                        CUSTOMER_REQUESTS[client_id]["status"] = "picked_up"
+                        # Manda comando para ir al destino
+                        taxi_command_msg = MessageProtocol.create_taxi_command(
+                            taxi_id=taxi_id, command="GOTO_DEST", new_destination_coords=final_destination_coords, client_id=client_id, final_destination_id=destination_id
+                        )
+                        send_central_update('taxi_commands', MessageProtocol.parse_message(taxi_command_msg))
 
                 # Si está yendo al destino y ha llegado
                 elif status == "moving_to_destination" and taxi["current_destination_coords"] and \
@@ -189,6 +202,35 @@ def process_sensor_data_messages():
                         TAXI_FLEET[taxi_id]["status"] = "free" 
             else:
                 print(f"Advertencia: Actualización de sensor de taxi no registrado: {taxi_id}")
+
+def draw_map_console(city_map, taxi_fleet, customer_requests):
+    """Dibuja el mapa 20x20 en consola con colores y wrap-around."""
+    grid = [["   " for _ in range(MAP_SIZE)] for _ in range(MAP_SIZE)]
+
+    # Localizaciones (mayúsculas, fondo azul)
+    for loc_id, coords in city_map.items():
+        x, y = wrap_position(coords['x'], coords['y'])
+        grid[y][x] = f"\033[44m {loc_id} \033[0m"  # Fondo azul
+
+    # Clientes (minúsculas, fondo amarillo)
+    for client_id, req_data in customer_requests.items():
+        if "origin_coords" in req_data:
+            x, y = wrap_position(req_data["origin_coords"]["x"], req_data["origin_coords"]["y"])
+            grid[y][x] = f"\033[43m {client_id[0].lower()} \033[0m"  # Fondo amarillo
+
+    # Taxis (número, verde si moviéndose, rojo si parado)
+    for taxi_id, taxi_data in taxi_fleet.items():
+        x, y = wrap_position(taxi_data["x"], taxi_data["y"])
+        if taxi_data["status"] in ["moving_to_customer", "moving_to_destination"]:
+            color = "\033[42m"  # Fondo verde
+        else:
+            color = "\033[41m"  # Fondo rojo
+        grid[y][x] = f"{color}{str(taxi_id).rjust(3)}\033[0m"
+
+    # Imprimir el grid (Y invertido para que 0,0 sea abajo izquierda)
+    for row in reversed(grid):
+        print("".join(row))
+    print("-" * 60)
 
 def process_customer_request_messages():
     """Procesa los mensajes del tema 'customer_requests'."""
@@ -284,23 +326,34 @@ def process_service_completed_messages():
             
             print(f"Servicio completado para cliente {client_id} por Taxi {taxi_id} en destino {destination_id}")
             
+            # Elimina al cliente del estado
             if client_id in CUSTOMER_REQUESTS:
-                CUSTOMER_REQUESTS[client_id]["status"] = "completed"
-                TAXI_FLEET[taxi_id]["status"] = "free"
-                TAXI_FLEET[taxi_id]["service_id"] = None
-                TAXI_FLEET[taxi_id]["current_destination_coords"] = None
+                del CUSTOMER_REQUESTS[client_id]
+            # El taxi debe volver a su posición inicial
+            # Guarda la posición inicial al cargar la flota
+            if "initial_x" in TAXI_FLEET[taxi_id] and "initial_y" in TAXI_FLEET[taxi_id]:
+                initial_coords = {"x": TAXI_FLEET[taxi_id]["initial_x"], "y": TAXI_FLEET[taxi_id]["initial_y"]}
+            else:
+                initial_coords = {"x": 0, "y": 0}
+            TAXI_FLEET[taxi_id]["status"] = "returning_to_base"
+            TAXI_FLEET[taxi_id]["current_destination_coords"] = initial_coords
+
+            taxi_command_msg = MessageProtocol.create_taxi_command(
+                taxi_id=taxi_id, command="RETURN_TO_BASE", new_destination_coords=initial_coords
+            )
+            send_central_update('taxi_commands', MessageProtocol.parse_message(taxi_command_msg))
 
 # --- Función para enviar el estado completo del mapa ---
 def send_map_updates_periodically():
     """Envía el estado completo del mapa a Kafka periódicamente."""
     while True:
-        # Usamos deepcopy para asegurar que la instantánea del mapa no se modifique mientras se envía
         map_state_message = MessageProtocol.create_map_update(
             city_map=copy.deepcopy(CITY_MAP),
             taxi_fleet=copy.deepcopy(TAXI_FLEET),
             customer_requests=copy.deepcopy(CUSTOMER_REQUESTS)
         )
         send_central_update('map_updates', MessageProtocol.parse_message(map_state_message))
+        # draw_map_console(CITY_MAP, TAXI_FLEET, CUSTOMER_REQUESTS)  # <-- Elimina o comenta esta línea
         time.sleep(MAP_UPDATE_INTERVAL)
 
 # --- Funciones de Sockets (Autenticación de Taxis) ---

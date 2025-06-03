@@ -6,6 +6,7 @@ import sys
 import threading
 import os # Importar os para limpiar la consola
 from kafka import KafkaProducer, KafkaConsumer
+from collections import deque
 
 # Obtiene la ruta del directorio del script actual (Central/)
 script_dir = os.path.dirname(__file__)
@@ -105,65 +106,68 @@ def send_current_position():
     position_msg = MessageProtocol.create_taxi_position_update(TAXI_ID, current_x, current_y, status)
     send_kafka_message('taxi_movements', MessageProtocol.parse_message(position_msg))
 
+MAP_SIZE = 20
+
+def wrap_position(x, y):
+    return x % MAP_SIZE, y % MAP_SIZE
+
+def shortest_path_step(start_x, start_y, goal_x, goal_y):
+    """Devuelve el siguiente paso hacia el objetivo usando BFS y wrap-around."""
+    visited = set()
+    queue = deque()
+    queue.append((start_x, start_y, []))
+    while queue:
+        x, y, path = queue.popleft()
+        if (x, y) == (goal_x, goal_y):
+            return path[0] if path else (x, y)
+        for dx, dy in [(-1,0),(1,0),(0,-1),(0,1)]:
+            nx, ny = wrap_position(x + dx, y + dy)
+            if (nx, ny) not in visited:
+                visited.add((nx, ny))
+                queue.append((nx, ny, path + [(nx, ny)]))
+    return (start_x, start_y)  # Si no hay camino, quedarse
+
 def calculate_next_step(current_x, current_y, target_x, target_y):
-    """Calcula el siguiente paso para acercarse al objetivo."""
-    dx = target_x - current_x
-    dy = target_y - current_y
-
-    next_x, next_y = current_x, current_y
-
-    if dx != 0:
-        next_x += 1 if dx > 0 else -1
-    if dy != 0:
-        next_y += 1 if dy > 0 else -1
-    
-    return next_x, next_y
+    """Calcula el siguiente paso óptimo hacia el destino."""
+    return shortest_path_step(current_x, current_y, target_x, target_y)
 
 def simulate_movement():
-    """Simula el movimiento dirigido del taxi o movimiento aleatorio si está libre."""
     global current_x, current_y, status, target_x, target_y, assigned_service_id, final_destination_id
 
-    if status == "disconnected" or status == "disabled" or status == "stopped":
+    if status in ["disconnected", "disabled", "stopped"]:
         return 
 
     if target_x is not None and target_y is not None:
         if (current_x, current_y) == (target_x, target_y):
             if status == "moving_to_customer":
-                print(f"Taxi {TAXI_ID}: Llegó al cliente {assigned_service_id} en ({current_x},{current_y}).")
-                # Aquí el taxi espera el siguiente comando para ir al destino final.
-                # La Central debería enviar el comando "GOTO_DEST" después de esto.
-                # Por ahora, el taxi simplemente limpia su target y espera un nuevo comando.
-                status = "picked_up" # Un nuevo estado para indicar que el cliente ha sido recogido
-                target_x = None 
-                target_y = None
-                send_current_position() # Actualizar status a la Central
+                print(f"Taxi {TAXI_ID}: Cliente {assigned_service_id} recogido en ({current_x},{current_y}). Avisando a la Central y esperando destino final...")
+                send_current_position()  # Solo reporta, espera comando GOTO_DEST de la Central
             elif status == "moving_to_destination":
-                print(f"Taxi {TAXI_ID}: Llegó al destino final {final_destination_id} para cliente {assigned_service_id}.")
+                print(f"Taxi {TAXI_ID}: Cliente {assigned_service_id} dejado en destino final {final_destination_id} ({current_x},{current_y}). Avisando a la Central...")
                 service_completed_msg = MessageProtocol.create_service_completed(
                     client_id=assigned_service_id, taxi_id=TAXI_ID, destination_id=final_destination_id
                 )
                 send_kafka_message('service_notifications', MessageProtocol.parse_message(service_completed_msg))
-                status = "free" 
-                assigned_service_id = None
+                # Espera comando RETURN_TO_BASE de la Central
+            elif status == "returning_to_base":
+                print(f"Taxi {TAXI_ID}: He vuelto a la base ({current_x},{current_y}). Quedo libre.")
+                status = "free"
                 target_x = None
                 target_y = None
-                final_destination_id = None
-                send_current_position() 
-
+                send_current_position()
+            else:
+                print(f"Taxi {TAXI_ID}: Estado inesperado al llegar a destino: {status}")
         else:
             new_x, new_y = calculate_next_step(current_x, current_y, target_x, target_y)
             if (new_x, new_y) != (current_x, current_y):
                 current_x = new_x
                 current_y = new_y
-                # print(f"Taxi {TAXI_ID}: Movido a ({current_x},{current_y}). Estado: {status}. Hacia ({target_x},{target_y})")
                 send_current_position()
     elif status == "free":
         if random.random() < 0.3: 
             delta_x = random.choice([-1, 0, 1])
             delta_y = random.choice([-1, 0, 1])
-            new_x = max(0, min(10, current_x + delta_x)) 
-            new_y = max(0, min(10, current_y + delta_y)) 
-
+            new_x, new_y = wrap_position(current_x + delta_x, current_y + delta_y)
             if (new_x, new_y) != (current_x, current_y):
                 current_x = new_x
                 current_y = new_y
@@ -253,47 +257,37 @@ def clear_console():
     os.system('cls' if os.name == 'nt' else 'clear')
 
 def draw_map():
-    """Dibuja el mapa ASCII en la consola."""
+    """Dibuja el mapa 20x20 con colores y wrap-around."""
     clear_console()
-    print("-" * 30)
+    print("-" * 40)
     print(f"Taxi {TAXI_ID} | Estado: {status} | Pos: ({current_x},{current_y})")
-    print("-" * 30)
+    print("-" * 40)
 
-    # Determinar las dimensiones del mapa
-    max_x = max([loc['x'] for loc in current_city_map.values()] + [taxi['x'] for taxi in current_taxi_fleet_state.values()] + [cust['origin_coords']['x'] for cust in current_customer_requests_state.values()])
-    max_y = max([loc['y'] for loc in current_city_map.values()] + [taxi['y'] for taxi in current_taxi_fleet_state.values()] + [cust['origin_coords']['y'] for cust in current_customer_requests_state.values()])
+    grid = [["   " for _ in range(MAP_SIZE)] for _ in range(MAP_SIZE)]
 
-    grid_width = max_x + 1 # +1 porque las coordenadas son 0-indexadas
-    grid_height = max_y + 1
-
-    grid = [[' . ' for _ in range(grid_width)] for _ in range(grid_height)]
-
-    # Colocar ubicaciones de la ciudad
+    # Localizaciones (mayúsculas, fondo azul)
     for loc_id, coords in current_city_map.items():
-        if 0 <= coords['y'] < grid_height and 0 <= coords['x'] < grid_width:
-            grid[coords['y']][coords['x']] = f" {loc_id} " # Letra mayúscula para ubicaciones
+        x, y = wrap_position(coords['x'], coords['y'])
+        grid[y-1][x-1] = f"\033[44m {loc_id} \033[0m"
 
-    # Colocar clientes (puntos de recogida)
+    # Clientes (minúsculas, fondo amarillo)
     for client_id, req_data in current_customer_requests_state.items():
-        cx, cy = req_data['origin_coords']['x'], req_data['origin_coords']['y']
-        if 0 <= cy < grid_height and 0 <= cx < grid_width:
-            # Representar cliente como 'c' o la primera letra de su ID en minúscula si es posible
-            if grid[cy][cx] == ' . ': # Solo si no hay una ubicación fija
-                grid[cy][cx] = f" {client_id[0].lower()} "
+        cx, cy = wrap_position(req_data['origin_coords']['x'], req_data['origin_coords']['y'])
+        grid[cy-1][cx-1] = f"\033[43m {client_id[0].lower()} \033[0m"
 
-    # Colocar taxis (¡último para que se vean sobre otros elementos si coinciden!)
+    # Taxis (número, verde si moviéndose, rojo si parado)
     for taxi_id, taxi_data in current_taxi_fleet_state.items():
-        tx, ty = taxi_data['x'], taxi_data['y']
-        # El taxi actual se representa con su ID, otros taxis con 'T'
-        if taxi_id == TAXI_ID:
-            grid[ty][tx] = f"[{TAXI_ID}]"
+        tx, ty = wrap_position(taxi_data['x'], taxi_data['y'])
+        if taxi_data["status"] in ["moving_to_customer", "moving_to_destination", "returning_to_base"]:
+            color = "\033[42m"  # Verde
         else:
-            grid[ty][tx] = f"[T{taxi_id}]" # Otros taxis con "T" y su ID
+            color = "\033[41m"  # Rojo
+        grid[ty-1][tx-1] = f"{color}{str(taxi_id).rjust(3)}\033[0m"
 
-    # Imprimir el grid (invertir Y para que (0,0) sea abajo izquierda)
+    # Imprimir el grid (Y invertido para que 1,1 sea abajo izquierda)
     for row in reversed(grid):
         print("".join(row))
-    print("-" * 30)
+    print("-" * 40)
 
 def main():
     global current_x, current_y, status
@@ -308,9 +302,9 @@ def main():
                 if len(parts) == 4:
                     taxi_id_file = int(parts[0])
                     if taxi_id_file == TAXI_ID:
-                        current_x = int(parts[1])
+                        current_x = int(parts[1])  # NO sumes 1
                         current_y = int(parts[2])
-                        status = "disconnected" 
+                        status = "disconnected"
                         print(f"Taxi {TAXI_ID}: Posición inicial cargada ({current_x},{current_y}).")
                         break
             else:
