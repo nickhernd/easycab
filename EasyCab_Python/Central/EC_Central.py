@@ -52,6 +52,7 @@ taxi_position_consumer = KafkaConsumer(
     group_id='central_group'
 )
 
+
 sensor_data_consumer = KafkaConsumer(
     'sensor_data',
     bootstrap_servers=[KAFKA_BROKER],
@@ -131,6 +132,9 @@ def process_taxi_movement_messages():
             y = msg_value["data"]["y"]
             status = msg_value["data"]["status"]
 
+            # Imprimir posicion del taxi actual
+            print(f"Taxi {taxi_id} moviéndose a ({x}, {y}) con estado '{status}'")
+
             if taxi_id in TAXI_FLEET:
                 taxi = TAXI_FLEET[taxi_id]
                 taxi["x"] = x
@@ -179,7 +183,8 @@ def process_taxi_movement_messages():
                 # Si está volviendo a base y ha llegado
                 elif status == "returning_to_base" and taxi["current_destination_coords"] and \
                      (x, y) == (taxi["current_destination_coords"]["x"], taxi["current_destination_coords"]["y"]):
-                    taxi["status"] = "free"
+                    taxi["status"] = "disabled"  # Deshabilita el taxi al llegar a base
+                    taxi["service_id"] = None  # Limpia el ID de servicio
                     taxi["current_destination_coords"] = None
             else:
                 print(f"Advertencia: Movimiento de taxi no registrado: {taxi_id}")
@@ -319,11 +324,13 @@ def process_service_completed_messages():
     """Procesa los mensajes del tema 'service_notifications' cuando el taxi finaliza un servicio."""
     for message in central_service_notification_consumer: 
         msg_value = message.value
-        if msg_value.get("operation_code") == MessageProtocol.OP_SERVICE_COMPLETED:
-            client_id = msg_value["data"]["client_id"]
-            taxi_id = msg_value["data"]["taxi_id"]
-            destination_id = msg_value["data"]["destination_id"]
+        taxi_id = msg_value["data"]["taxi_id"]
+
+        if msg_value.get("operation_code") == MessageProtocol.OP_SERVICE_COMPLETED:            
             
+            client_id = msg_value["data"]["client_id"]
+            destination_id = msg_value["data"]["destination_id"]
+
             print(f"Servicio completado para cliente {client_id} por Taxi {taxi_id} en destino {destination_id}")
             
             # Elimina al cliente del estado
@@ -333,15 +340,20 @@ def process_service_completed_messages():
             # Guarda la posición inicial al cargar la flota
             if "initial_x" in TAXI_FLEET[taxi_id] and "initial_y" in TAXI_FLEET[taxi_id]:
                 initial_coords = {"x": TAXI_FLEET[taxi_id]["initial_x"], "y": TAXI_FLEET[taxi_id]["initial_y"]}
+                print(f"{initial_coords}")
             else:
                 initial_coords = {"x": 0, "y": 0}
+                print(f"{initial_coords}")
             TAXI_FLEET[taxi_id]["status"] = "returning_to_base"
             TAXI_FLEET[taxi_id]["current_destination_coords"] = initial_coords
+
+            print(f"Posicion actual del taxi {taxi_id}: ({TAXI_FLEET[taxi_id]['x']}, {TAXI_FLEET[taxi_id]['y']})")
 
             taxi_command_msg = MessageProtocol.create_taxi_command(
                 taxi_id=taxi_id, command="RETURN_TO_BASE", new_destination_coords=initial_coords
             )
             send_central_update('taxi_commands', MessageProtocol.parse_message(taxi_command_msg))
+                
 
 # --- Función para enviar el estado completo del mapa ---
 def send_map_updates_periodically():

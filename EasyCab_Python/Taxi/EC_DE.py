@@ -111,6 +111,10 @@ MAP_SIZE = 20
 def wrap_position(x, y):
     return x % MAP_SIZE, y % MAP_SIZE
 
+def get_current_position():
+    """Devuelve la posición actual del taxi."""
+    return current_x, current_y
+
 def shortest_path_step(start_x, start_y, goal_x, goal_y):
     """Devuelve el siguiente paso hacia el objetivo usando BFS y wrap-around."""
     visited = set()
@@ -151,9 +155,9 @@ def simulate_movement():
                 # Espera comando RETURN_TO_BASE de la Central
             elif status == "returning_to_base":
                 print(f"Taxi {TAXI_ID}: He vuelto a la base ({current_x},{current_y}). Quedo libre.")
-                status = "free"
-                target_x = None
-                target_y = None
+                status = "free" 
+                target_x = 0
+                target_y = 0
                 send_current_position()
             else:
                 print(f"Taxi {TAXI_ID}: Estado inesperado al llegar a destino: {status}")
