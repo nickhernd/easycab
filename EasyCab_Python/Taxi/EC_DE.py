@@ -7,6 +7,7 @@ import threading
 import os # Importar os para limpiar la consola
 from kafka import KafkaProducer, KafkaConsumer
 from collections import deque
+import requests
 
 # Obtiene la ruta del directorio del script actual (Central/)
 script_dir = os.path.dirname(__file__)
@@ -62,6 +63,7 @@ map_update_consumer = KafkaConsumer(
     group_id=f'map_viewer_group_taxi_{TAXI_ID}' # Cada taxi necesita su propio group_id para recibir todos los mensajes
 )
 
+taxi_token = None
 
 def send_kafka_message(topic, message):
     """Envía un mensaje JSON a un tema de Kafka."""
@@ -73,8 +75,7 @@ def send_kafka_message(topic, message):
         print(f"Taxi {TAXI_ID}: Error enviando mensaje a Kafka ({topic}): {e}")
 
 def authenticate_with_central():
-    """Intenta autenticarse con la Central via socket."""
-    global status
+    global status, taxi_token
     print(f"Taxi {TAXI_ID}: Intentando conectar con la Central para autenticación en {CENTRAL_HOST}:{CENTRAL_PORT_AUTH}...")
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -86,9 +87,10 @@ def authenticate_with_central():
 
             if response_msg.get("operation_code") == MessageProtocol.OP_AUTH_RESPONSE:
                 if response_msg["data"].get("status") == MessageProtocol.STATUS_OK:
+                    taxi_token = response_msg["data"].get("message")  # El token se envía en el campo message
                     status = "free"
-                    print(f"Taxi {TAXI_ID}: Autenticación exitosa. Estado: {status}")
-                    send_current_position() 
+                    print(f"Taxi {TAXI_ID}: Autenticación exitosa. Token recibido: {taxi_token}")
+                    send_current_position()
                     return True
                 else:
                     print(f"Taxi {TAXI_ID}: Fallo en la autenticación: {response_msg['data'].get('message', 'Desconocido')}")
@@ -102,9 +104,12 @@ def authenticate_with_central():
     return False
 
 def send_current_position():
-    """Envía la posición actual del taxi a Kafka."""
+    """Envía la posición actual del taxi a Kafka, incluyendo el token."""
     position_msg = MessageProtocol.create_taxi_position_update(TAXI_ID, current_x, current_y, status)
-    send_kafka_message('taxi_movements', MessageProtocol.parse_message(position_msg))
+    # Añade el token al mensaje
+    msg_dict = MessageProtocol.parse_message(position_msg)
+    msg_dict["token"] = taxi_token
+    send_kafka_message('taxi_movements', json.dumps(msg_dict))
 
 MAP_SIZE = 20
 
@@ -293,6 +298,20 @@ def draw_map():
         print("".join(row))
     print("-" * 40)
 
+def register_taxi_in_registry():
+    url = "https://localhost:5002/register"
+    try:
+        response = requests.post(url, json={"taxi_id": TAXI_ID}, verify=False)
+        if response.status_code == 200 and response.json().get("status") == "OK":
+            print(f"Taxi {TAXI_ID}: Registrado correctamente en Registry.")
+            return True
+        else:
+            print(f"Taxi {TAXI_ID}: Error al registrar en Registry: {response.text}")
+            return False
+    except Exception as e:
+        print(f"Taxi {TAXI_ID}: Error al conectar con Registry: {e}")
+        return False
+
 def main():
     global current_x, current_y, status
 
@@ -319,6 +338,10 @@ def main():
         print("Error: taxis_available.txt no encontrado. Usando 0,0 como posición inicial.")
         current_x = 0
         current_y = 0
+
+    if not register_taxi_in_registry():
+        print(f"Taxi {TAXI_ID}: No se pudo registrar en Registry. Saliendo...")
+        sys.exit(1)
 
     if not authenticate_with_central():
         print(f"Taxi {TAXI_ID}: Fallo en la autenticación. Saliendo...")

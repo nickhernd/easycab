@@ -6,6 +6,10 @@ import sys
 import os
 import copy # Importar copy para la función de deepcopy
 from kafka import KafkaProducer, KafkaConsumer
+import requests
+from datetime import datetime
+import secrets
+from Central.audit_api import add_audit_event, run_audit_api
 
 # Obtiene la ruta del directorio del script actual (Central/)
 script_dir = os.path.dirname(__file__)
@@ -369,6 +373,11 @@ def send_map_updates_periodically():
         time.sleep(MAP_UPDATE_INTERVAL)
 
 # --- Funciones de Sockets (Autenticación de Taxis) ---
+ACTIVE_TOKENS = {}  # {taxi_id: token}
+
+def generate_token():
+    return secrets.token_hex(16)
+
 def handle_taxi_auth_client(conn, addr):
     """Maneja una conexión de socket entrante para autenticación de taxi."""
     print(f"Conexión de autenticación de taxi desde {addr}")
@@ -379,16 +388,21 @@ def handle_taxi_auth_client(conn, addr):
             if message.get("operation_code") == MessageProtocol.OP_AUTH_REQUEST:
                 taxi_id = message["data"].get("taxi_id")
                 if taxi_id and taxi_id in TAXI_FLEET:
+                    # Generar token y guardarlo temporalmente
+                    token = generate_token()
+                    ACTIVE_TOKENS[taxi_id] = token
                     response_msg = MessageProtocol.create_auth_response(
-                        taxi_id, MessageProtocol.STATUS_OK, "Autenticado correctamente."
+                        taxi_id, MessageProtocol.STATUS_OK, token
                     )
+                    log_audit_event("Taxi", addr[0], "AuthSuccess", f"Taxi {taxi_id} autenticado. Token: {token}")
                     if TAXI_FLEET[taxi_id]["status"] != "disabled":
-                        TAXI_FLEET[taxi_id]["status"] = "free" 
+                        TAXI_FLEET[taxi_id]["status"] = "free"
                     print(f"Taxi {taxi_id} autenticado y listo.")
                 else:
                     response_msg = MessageProtocol.create_auth_response(
                         taxi_id, MessageProtocol.STATUS_KO, "ID de taxi no válido o no registrado."
                     )
+                    log_audit_event("Taxi", addr[0], "AuthFail", f"Intento de autenticación fallido para {taxi_id}")
                     print(f"Fallo de autenticación para ID {taxi_id}: No válido.")
                 conn.sendall(response_msg.encode('utf-8'))
             else:
@@ -396,6 +410,7 @@ def handle_taxi_auth_client(conn, addr):
                 conn.sendall(MessageProtocol.create_auth_response(None, MessageProtocol.STATUS_KO, "Mensaje inválido").encode('utf-8'))
     except Exception as e:
         print(f"Error al manejar la autenticación del taxi: {e}")
+        log_audit_event("Taxi", addr[0], "AuthError", str(e))
     finally:
         conn.close()
         print(f"Conexión de autenticación de {addr} cerrada.")
@@ -432,11 +447,65 @@ def main():
     threading.Thread(target=process_customer_request_messages, daemon=True).start()
     threading.Thread(target=process_service_completed_messages, daemon=True).start()
 
-    # NUEVO: Hilo para enviar actualizaciones del mapa
+    # Hilo para enviar actualizaciones del mapa
     threading.Thread(target=send_map_updates_periodically, daemon=True).start()
 
+    # Hilo para consultar el estado del tráfico
+    threading.Thread(target=check_traffic_status_periodically, daemon=True).start()
+
+    # Iniciar el API REST de auditoría en un hilo aparte
+    threading.Thread(target=run_audit_api, daemon=True).start()
     start_auth_server()
 
 
 if __name__ == "__main__":
     main()
+
+TRAFFIC_STATUS = "UNKNOWN"  # OK, KO, UNKNOWN
+
+def log_audit_event(who, ip, action, description):
+    """Registra un evento de auditoría estructurada."""
+    now = datetime.now().isoformat()
+    event = {
+        "timestamp": now,
+        "who": who,
+        "ip": ip,
+        "action": action,
+        "description": description
+    }
+    print(f"[AUDIT] {now} | {who} | {ip} | {action} | {description}")
+    AUDIT_LOG.append(event)
+    add_audit_event(event)
+
+def check_traffic_status_periodically():
+    """Consulta el API REST de EC_CTC cada 10 segundos para conocer el estado del tráfico."""
+    global TRAFFIC_STATUS
+    while True:
+        try:
+            response = requests.get("http://localhost:5001/traffic_status")
+            if response.status_code == 200:
+                data = response.json()
+                new_status = data.get("status", "UNKNOWN")
+                if new_status != TRAFFIC_STATUS:
+                    log_audit_event(
+                        who="EC_Central",
+                        ip="localhost",
+                        action="TrafficStatusChange",
+                        description=f"Estado del tráfico cambiado a {new_status}"
+                    )
+                TRAFFIC_STATUS = new_status
+            else:
+                log_audit_event(
+                    who="EC_Central",
+                    ip="localhost",
+                    action="TrafficStatusError",
+                    description=f"Respuesta inesperada del API CTC: {response.status_code}"
+                )
+        except Exception as e:
+            log_audit_event(
+                who="EC_Central",
+                ip="localhost",
+                action="TrafficStatusError",
+                description=f"Error al consultar el API CTC: {e}"
+            )
+        time.sleep(10)

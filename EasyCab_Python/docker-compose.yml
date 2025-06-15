@@ -1,0 +1,109 @@
+version: '3.8'
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    hostname: zookeeper
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    hostname: kafka
+    container_name: kafka
+    ports:
+      - "9094:9094"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9094
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    depends_on:
+      - zookeeper
+
+  central:
+    build: ./Central
+    container_name: central
+    ports:
+      - "65432:65432"   # Sockets autenticación taxis
+    environment:
+      - KAFKA_BROKER=kafka:29092
+    depends_on:
+      - kafka
+    networks:
+      - easycab
+
+  registry:
+    build: ./Regestry
+    container_name: registry
+    ports:
+      - "5002:5002"
+    networks:
+      - easycab
+
+  ctc:
+    build: ./Traffic
+    container_name: ctc
+    ports:
+      - "5001:5001"
+    environment:
+      - OPENWEATHER_API_KEY=TU_API_KEY
+    networks:
+      - easycab
+
+  taxi1:
+    build: ./Taxi
+    container_name: taxi1
+    environment:
+      - TAXI_ID=1
+      - KAFKA_BROKER=kafka:29092
+    depends_on:
+      - kafka
+      - central
+    networks:
+      - easycab
+
+  taxi2:
+    build: ./Taxi
+    container_name: taxi2
+    environment:
+      - TAXI_ID=2
+      - KAFKA_BROKER=kafka:29092
+    depends_on:
+      - kafka
+      - central
+    networks:
+      - easycab
+
+  customer1:
+    build: ./Customer
+    container_name: customer1
+    environment:
+      - CLIENT_ID=client_A
+      - KAFKA_BROKER=kafka:29092
+    depends_on:
+      - kafka
+      - central
+    networks:
+      - easycab
+
+  front:
+    build: ./WebVisualization
+    container_name: front
+    ports:
+      - "8080:8080"
+    networks:
+      - easycab
+
+networks:
+  easycab:
+    driver: bridge
