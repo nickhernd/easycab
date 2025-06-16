@@ -4,6 +4,13 @@ import sys
 import os # Importar os para limpiar la consola
 import threading
 from kafka import KafkaProducer, KafkaConsumer
+import argparse
+
+argparse = argparse.ArgumentParser(description='EasyCab Customer (EC_Customer) para gestionar solicitudes de servicio de taxis.')
+argparse.add_argument('--kafka_broker', type=str, default='localhost:9094', help='Dirección del broker de Kafka para enviar mensajes.')
+argparse.add_argument('--client_id', type=str, default='client_A', help='ID del cliente (opcional, por defecto "client_A").')
+args = argparse.parse_args()
+
 
 # Obtiene la ruta del directorio del script actual (Customer/)
 script_dir = os.path.dirname(__file__)
@@ -15,8 +22,8 @@ sys.path.insert(0, project_root)
 from common.message_protocol import MessageProtocol
 
 # --- Configuración del Cliente ---
-CLIENT_ID = sys.argv[1] if len(sys.argv) > 1 else "client_A" # ID del cliente
-KAFKA_BROKER = 'localhost:9094' # Dirección del broker de Kafka
+CLIENT_ID = args.client_id
+KAFKA_BROKER = args.kafka_broker
 REQUESTS_FILE = 'Customer/customer_requests.txt' # Archivo de solicitudes
 
 # --- Estado del Cliente ---
