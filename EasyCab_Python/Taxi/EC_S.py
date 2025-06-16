@@ -4,6 +4,13 @@ import sys
 import os
 import threading
 from kafka import KafkaProducer
+import argparse
+
+argparse = argparse.ArgumentParser(description='EasyCab Sensor (EC_S) para simular y enviar datos de sensores de taxis.')
+argparse.add_argument('--ip_port_ecde', type=str, default='localhost:9095', help='Dirección IP y puerto del ECDE (EasyCab Data Engine).')
+argparse.add_argument('--id_taxi', type=int, required=True, help='ID del taxi al que está asociado este sensor.')
+argparse.add_argument('--kafka_broker', type=str, default='localhost:9092', help='Dirección del broker de Kafka para enviar mensajes.')
+args = argparse.parse_args()
 
 # Obtiene la ruta del directorio del script actual (ej. Sensors/)
 script_dir = os.path.dirname(__file__)
@@ -16,10 +23,10 @@ from common.message_protocol import MessageProtocol
 
 # --- Configuración del Sensor ---
 # El ID del taxi al que está asociado este sensor
-TAXI_ID = int(sys.argv[1]) if len(sys.argv) > 1 else 1
-KAFKA_BROKER = 'localhost:9094' # Dirección del broker de Kafka
+TAXI_ID = args.id_taxi
+KAFKA_BROKER = args.kafka_broker
 SENSOR_UPDATE_INTERVAL = 1 # Intervalo de envío de datos del sensor en segundos
-IP_PORT_ECDE = 'localhost:9095'
+IP_PORT_ECDE = args.ip_port_ecde
 
 # --- Estado del Sensor ---
 current_sensor_status = MessageProtocol.STATUS_OK # Inicialmente OK

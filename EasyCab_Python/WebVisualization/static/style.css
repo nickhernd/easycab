@@ -141,7 +141,7 @@ h1 {
     color: #333; /* Texto oscuro para fondo claro */
 }
 
-/* Usar las mismas clases de estilo para los ejemplos de la leyenda que para las celdas del mapa */
+/* Usar las asfmismas clases de estilo para los ejemplos de la leyenda que para las celdas del mapa */
 .legend-char.taxi-free {
     background-color: #28a745;
 }

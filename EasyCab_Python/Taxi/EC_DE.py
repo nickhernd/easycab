@@ -8,6 +8,15 @@ import os # Importar os para limpiar la consola
 from kafka import KafkaProducer, KafkaConsumer
 from collections import deque
 import requests
+import argparse
+
+argparser = argparse.ArgumentParser(description='Taxi Digital Engine (EC_DE) para EasyCab.')
+argparser.add_argument('--ip_port_ecc', type=str, default='localhost:9096')
+argparser.add_argument('--kafka_broker', type=str, default='localhost:9094')
+argparser.add_argument('--ip_port_ecs', type=str, default='localhost:9096')
+argparser.add_argument('--taxi_id', type=int, default=1, help='ID del taxi (por defecto 1)')
+args = argparser.parse_args()
+
 
 # Obtiene la ruta del directorio del script actual (Central/)
 script_dir = os.path.dirname(__file__)
@@ -19,11 +28,11 @@ sys.path.insert(0, project_root)
 from common.message_protocol import MessageProtocol
 
 # --- Configuración del Taxi ---
-TAXI_ID = int(sys.argv[1]) if len(sys.argv) > 1 else 1 # ID del taxi, pasado como argumento
-CENTRAL_HOST = 'localhost' # La IP o hostname de la máquina donde corre EC_Central
+TAXI_ID = args.taxi_id
+CENTRAL_HOST = args.ip_port_ecc
 CENTRAL_PORT_AUTH = 65432 # Puerto para autenticación de la Central
-KAFKA_BROKER = 'localhost:9094' # Dirección del broker de Kafka
-IP_PORT_ECS = 'localhost:9096'
+KAFKA_BROKER = args.kafka_broker
+IP_PORT_ECS = args.ip_port_ecs
 
 
 # --- Estado del Taxi ---

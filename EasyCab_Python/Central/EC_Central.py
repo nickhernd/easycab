@@ -10,6 +10,13 @@ import requests
 from datetime import datetime
 import secrets
 from Central.audit_api import add_audit_event, run_audit_api
+import argparse
+
+parser = argparse.ArgumentParser(description="EasyCab Central Configuration")
+
+parser.add_argument('--listen_port', type= int, default=65432)
+parser.add_argument('--ip_port_broker', type=str, default='localhost:9094')
+args = parser.parse_args()
 
 # Obtiene la ruta del directorio del script actual (Central/)
 script_dir = os.path.dirname(__file__)
@@ -21,10 +28,9 @@ sys.path.insert(0, project_root)
 from common.message_protocol import MessageProtocol 
 
 # --- Configuración General ---
-CENTRAL_HOST = '0.0.0.0' # Escucha en todas las interfaces disponibles
-CENTRAL_PORT_AUTH = 65432 # Puerto para autenticación de taxis (via sockets)
-KAFKA_BROKER = 'localhost:9094' # Dirección del broker de Kafka
-MAP_UPDATE_INTERVAL = 2 # Segundos entre cada actualización del mapa
+CENTRAL_PORT_AUTH = args.listen_port # Puerto para autenticación de taxis (via sockets)
+KAFKA_BROKER = args.ip_port_broker # Dirección del broker de Kafka
+MAP_UPDATE_INTERVAL = 1 # Segundos entre cada actualización del mapa
 
 MAP_SIZE = 20
 

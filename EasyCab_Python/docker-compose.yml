@@ -34,9 +34,10 @@ services:
     build: ./Central
     container_name: central
     ports:
-      - "65432:65432"   # Sockets autenticación taxis
+      - "65432:65432"
     environment:
       - KAFKA_BROKER=kafka:29092
+    entrypoint: ["python", "central.py", "--listen_port", "65432", '--ip_port_broker', 'localhost:9094']
     depends_on:
       - kafka
     networks:
@@ -60,36 +61,24 @@ services:
     networks:
       - easycab
 
-  taxi1:
+  taxi:
     build: ./Taxi
-    container_name: taxi1
+    container_name: taxi
     environment:
-      - TAXI_ID=1
       - KAFKA_BROKER=kafka:29092
+    entrypoint: ["python", "taxi.py", '--ip_port_ecc', "localhost:9096", '--kafka_broker', 'localhost:9094', '--ip_port_ecs', 'localhost:9096', '--taxi_id', '1']
     depends_on:
       - kafka
       - central
     networks:
       - easycab
 
-  taxi2:
-    build: ./Taxi
-    container_name: taxi2
-    environment:
-      - TAXI_ID=2
-      - KAFKA_BROKER=kafka:29092
-    depends_on:
-      - kafka
-      - central
-    networks:
-      - easycab
-
-  customer1:
+  customer:
     build: ./Customer
-    container_name: customer1
+    container_name: customer
     environment:
-      - CLIENT_ID=client_A
       - KAFKA_BROKER=kafka:29092
+    entrypoint: ["python", "customer.py", '--kafka_broker','localhost:9094','--client_id','a']
     depends_on:
       - kafka
       - central
