@@ -37,6 +37,7 @@ services:
       - "65432:65432"
     environment:
       - KAFKA_BROKER=kafka:29092
+    entrypoint: ["python", "central.py", "--listen_port", "65432", '--ip_port_broker', 'localhost:9094']
     depends_on:
       - kafka
     networks:
@@ -65,6 +66,7 @@ services:
     container_name: taxi
     environment:
       - KAFKA_BROKER=kafka:29092
+    entrypoint: ["python", "taxi.py", '--ip_port_ecc', "localhost:9096", '--kafka_broker', 'localhost:9094', '--ip_port_ecs', 'localhost:9096', '--taxi_id', '1']
     depends_on:
       - kafka
       - central
@@ -76,6 +78,7 @@ services:
     container_name: customer
     environment:
       - KAFKA_BROKER=kafka:29092
+    entrypoint: ["python", "customer.py", '--kafka_broker','localhost:9094','--client_id','a']
     depends_on:
       - kafka
       - central
