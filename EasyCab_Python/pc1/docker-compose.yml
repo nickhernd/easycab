@@ -44,7 +44,6 @@ services:
       dockerfile: ./WebVisualization/Dockerfile
     ports:
       - "8080:8080"
-      - "8765:8765"
     volumes:
       - ../WebVisualization:/app/WebVisualization
     environment:
@@ -53,7 +52,35 @@ services:
       kafka:
         condition: service_started
     command: >
-      bash -c "
-      python3 /app/WebVisualization/app.py &
-      sleep 15 && python3 /app/WebVisualization/map_websocket_proxy.py --kafka_broker kafka:29092
-      "
+      bash -c "python3 /app/WebVisualization/app.py"
+
+  ws_server:
+    build:
+      context: ../
+      dockerfile: ./WebVisualization/Dockerfile
+    ports:
+      - "8765:8765"
+    expose:
+      - "8766"
+    volumes:
+      - ../WebVisualization:/app/WebVisualization
+    depends_on:
+      - front
+    command: >
+      bash -c "python3 /app/WebVisualization/ws_server.py"
+
+  kafka_to_file:
+    build:
+      context: ../
+      dockerfile: ./WebVisualization/Dockerfile
+    volumes:
+      - ../WebVisualization:/app/WebVisualization
+    environment:
+      KAFKA_BROKER: kafka:29092
+      WS_SERVER_HOST: ws_server
+      WS_SERVER_PORT: 8766
+    depends_on:
+      - kafka
+      - ws_server
+    command: >
+      bash -c "python3 /app/WebVisualization/kafka_to_file.py"
