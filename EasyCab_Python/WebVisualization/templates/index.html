@@ -18,7 +18,23 @@
             <div class="legend-item"><span class="legend-char taxi-disabled">T1</span> Taxi deshabilitado</div>
             <div class="legend-item"><span class="legend-char taxi-picked-up">T1</span> Taxi con cliente</div>
         </div>
-    </div>
+
+        <h2>Estado de Taxis</h2>
+        <div id="taxi-status-table-container">
+            <table id="taxi-status-table">
+                <thead>
+                    <tr>
+                        <th>Id.</th>
+                        <th>Estado</th>
+                        <th>Última Posición</th>
+                        <th>Cliente Asignado</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    </tbody>
+            </table>
+        </div>
+        </div>
     <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>

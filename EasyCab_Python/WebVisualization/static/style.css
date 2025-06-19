@@ -33,6 +33,7 @@ h1 {
 #map-container {
     display: grid;
     grid-template-columns: repeat(21, 28px);
+    grid-template-rows: repeat(21, 28px);
     background: #fff;
     border: 2px solid #222;
     margin: 0 auto 18px auto;
@@ -68,14 +69,16 @@ h1 {
 }
 
 .map-icon {
-    width: 26px;
-    height: 26px;
+    width: 22px; /* Was 26px */
+    height: 22px; /* Was 26px */
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 0.8em;
+    font-size: 0.75em; /* Slightly smaller font */
     font-weight: 700;
     border-radius: 2px;
+    line-height: 22px; /* Match height for vertical centering */
+    margin: 1px; /* Add a tiny margin to separate multiple icons in a cell */
 }
 
 .empty {
@@ -135,6 +138,53 @@ h1 {
     font-size: 1em;
     border: 1px solid #bbb;
 }
+
+h2 {
+    color: #222;
+    font-size: 1.1rem;
+    margin-top: 20px;
+    margin-bottom: 10px;
+    font-weight: 600;
+}
+
+#taxi-status-table-container {
+    width: 100%;
+    overflow-x: auto; /* Allows horizontal scrolling if table gets too wide */
+    margin-bottom: 20px;
+    border: 1px solid #bbb;
+    border-radius: 4px;
+}
+
+#taxi-status-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9em;
+}
+
+#taxi-status-table th,
+#taxi-status-table td {
+    padding: 8px 12px;
+    text-align: left;
+    border-bottom: 1px solid #eee;
+}
+
+#taxi-status-table thead th {
+    background-color: #f0f0f0;
+    font-weight: bold;
+    color: #333;
+    text-transform: uppercase;
+}
+
+#taxi-status-table tbody tr:hover {
+    background-color: #f9f9f9;
+}
+
+/* Status specific styling for cells (optional, if you want colored text) */
+.status-free { color: #1b5e20; font-weight: bold; }
+.status-moving_to_customer, .status-moving_to_destination { color: #0277bd; font-weight: bold; }
+.status-disabled, .status-stopped { color: #b71c1c; font-weight: bold; }
+.status-picked_up, .status-occupied { color: #e65100; font-weight: bold; }
+
 .legend-char.location { background: #e3f0ff; color: #1976d2; }
 .legend-char.customer { background: #fff9c4; color: #bfa100; }
 .legend-char.taxi-free { background: #c8f7c5; color: #1b5e20; }

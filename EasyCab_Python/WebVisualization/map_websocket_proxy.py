@@ -45,7 +45,7 @@ async def consume_kafka_messages(kafka_broker, kafka_topic):
     while consumer is None:
         try:
             consumer = KafkaConsumer(
-                kafka_topic,º
+                kafka_topic,
                 bootstrap_servers=kafka_broker,
                 api_version=(0, 10, 1),
                 value_deserializer=lambda m: json.loads(m.decode('utf-8')),
