@@ -8,19 +8,15 @@
 </head>
 <body>
     <div class="container">
-        <h1>EasyCab - Vista del Mapa</h1>
-        <div id="map-container">
-            </div>
+        <h1>*** EASY CAB ***</h1>
+        <div id="map-container"></div>
         <div class="legend">
-            <h3>Leyenda:</h3>
-            <ul>
-                <li><span class="legend-char location-char">A</span>: Ubicación de la Ciudad</li>
-                <li><span class="legend-char customer-char">c</span>: Cliente (punto de recogida)</li>
-                <li><span class="legend-char taxi-free">T1</span>: Taxi Libre (verde)</li>
-                <li><span class="legend-char taxi-moving">T1</span>: Taxi en Servicio (azul)</li>
-                <li><span class="legend-char taxi-disabled">T1</span>: Taxi Deshabilitado (rojo)</li>
-                <li><span class="legend-char taxi-picked-up">T1</span>: Taxi con Cliente (naranja)</li>
-            </ul>
+            <div class="legend-item"><span class="legend-char location">A</span> Ubicación</div>
+            <div class="legend-item"><span class="legend-char customer">c</span> Cliente</div>
+            <div class="legend-item"><span class="legend-char taxi-free">T1</span> Taxi libre</div>
+            <div class="legend-item"><span class="legend-char taxi-moving">T1</span> Taxi en servicio</div>
+            <div class="legend-item"><span class="legend-char taxi-disabled">T1</span> Taxi deshabilitado</div>
+            <div class="legend-item"><span class="legend-char taxi-picked-up">T1</span> Taxi con cliente</div>
         </div>
     </div>
     <script src="{{ url_for('static', filename='script.js') }}"></script>

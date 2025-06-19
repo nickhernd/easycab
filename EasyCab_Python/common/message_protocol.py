@@ -1,36 +1,34 @@
 import json
 
 class MessageProtocol:
-    # --- Operation Codes ---
+    # Operation Codes
     OP_AUTH_REQUEST = "AUTH_REQ"
     OP_AUTH_RESPONSE = "AUTH_RESP"
     OP_TAXI_POSITION = "TAXI_POS"
     OP_SENSOR_UPDATE = "SENSOR_UPD"
     OP_CUSTOMER_REQUEST = "CUST_REQ"
-    OP_SERVICE_NOTIFICATION = "SERV_NOTIF" # General service notifications (e.g., accepted, denied)
-    OP_TAXI_COMMAND = "TAXI_CMD" # Commands from Central to Taxi (PICKUP, GOTO_DEST, STOP, RESUME, etc.)
-    OP_SERVICE_COMPLETED = "SERV_COMPL" # Notification from Taxi to Central when a service is completed
-    OP_MAP_UPDATE = "MAP_UPD" # New: Central sends full map state
+    OP_SERVICE_NOTIFICATION = "SERV_NOTIF"
+    OP_TAXI_COMMAND = "TAXI_CMD"
+    OP_SERVICE_COMPLETED = "SERV_COMPL"
+    OP_MAP_UPDATE = "MAP_UPD"
 
-    # --- Status Codes ---
+    # Status Codes
     STATUS_OK = "OK"
     STATUS_KO = "KO"
 
     @staticmethod
     def create_message(operation_code, data):
-        """Crea un mensaje en formato JSON."""
+        """Crea un mensaje JSON con código de operación y datos."""
         return json.dumps({"operation_code": operation_code, "data": data})
 
     @staticmethod
     def parse_message(json_string):
-        """Parsea un mensaje JSON a un diccionario de Python."""
+        """Convierte un mensaje JSON a diccionario de Python."""
         try:
             return json.loads(json_string)
         except json.JSONDecodeError as e:
             print(f"Error al parsear mensaje JSON: {e}")
             return None
-
-    # --- Specific Message Creators ---
 
     @staticmethod
     def create_auth_request(taxi_id):
@@ -101,13 +99,8 @@ class MessageProtocol:
     @staticmethod
     def create_map_update(city_map, taxi_fleet, customer_requests):
         """
-        Crea un mensaje de actualización del mapa.
-        city_map: dict de ubicaciones.
-        taxi_fleet: dict de info de taxis (incluye x,y,status,service_id).
-        customer_requests: dict de solicitudes de clientes (incluye origin_coords, status).
+        Crea un mensaje de actualización del mapa con ubicaciones, taxis y clientes activos.
         """
-        # Simplificar customer_requests para el mapa: solo mostrar clientes pendientes o asignados.
-        # Las coordenadas de los clientes pendientes/asignados se usarán para dibujarlos.
         active_customers_on_map = {}
         for client_id, req_data in customer_requests.items():
             if req_data["status"] in ["pending", "assigned", "picked_up"]:
@@ -116,7 +109,6 @@ class MessageProtocol:
                     "status": req_data["status"]
                 }
 
-        # Adaptar taxi_fleet para el mapa: solo lo esencial
         simplified_taxi_fleet = {}
         for taxi_id, taxi_data in taxi_fleet.items():
             simplified_taxi_fleet[taxi_id] = {
@@ -128,8 +120,8 @@ class MessageProtocol:
         return MessageProtocol.create_message(
             MessageProtocol.OP_MAP_UPDATE,
             {
-                "city_map": city_map, # Las ubicaciones fijas (A, B, C...)
-                "taxi_fleet": simplified_taxi_fleet, # Posiciones y estados de taxis
-                "customer_requests": active_customers_on_map # Posiciones y estados de clientes (puntos de recogida)
+                "city_map": city_map,
+                "taxi_fleet": simplified_taxi_fleet,
+                "customer_requests": active_customers_on_map
             }
         )

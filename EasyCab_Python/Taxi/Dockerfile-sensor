@@ -1,0 +1,9 @@
+FROM python:3.9
+
+WORKDIR /Taxi
+COPY . /Taxi/
+
+COPY requirements.txt /Taxi/
+RUN pip install --no-cache-dir -r requirements.txt
+
+CMD ["python3", "EC_S.py", "--ip_port_ecde", "taxi:9095", "--id_taxi", "1", "--kafka_broker", "kafka:29092"]

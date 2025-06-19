@@ -4,7 +4,7 @@ import requests
 app = Flask(__name__)
 
 CITY = "Madrid"  # Ciudad por defecto
-OPENWEATHER_API_KEY = "TU_API_KEY"  # Sustituye por tu clave real
+OPENWEATHER_API_KEY = "f23280b7dd0ea5985e196bac7746037b"
 
 @app.route('/set_city', methods=['POST'])
 def set_city():

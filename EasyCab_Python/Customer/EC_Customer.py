@@ -1,7 +1,7 @@
 import time
 import json
 import sys
-import os # Importar os para limpiar la consola
+import os
 import threading
 from kafka import KafkaProducer, KafkaConsumer
 import argparse
@@ -12,11 +12,8 @@ argparse.add_argument('--client_id', type=str, default='client_A', help='ID del 
 args = argparse.parse_args()
 
 
-# Obtiene la ruta del directorio del script actual (Customer/)
 script_dir = os.path.dirname(__file__)
-# Obtiene la ruta del directorio EasyCab_Python/
 project_root = os.path.abspath(os.path.join(script_dir, '..'))
-# Añade el directorio raíz del proyecto a sys.path
 sys.path.insert(0, project_root)
 
 from common.message_protocol import MessageProtocol
@@ -24,7 +21,7 @@ from common.message_protocol import MessageProtocol
 # --- Configuración del Cliente ---
 CLIENT_ID = args.client_id
 KAFKA_BROKER = args.kafka_broker
-REQUESTS_FILE = 'Customer/customer_requests.txt' # Archivo de solicitudes
+REQUESTS_FILE = 'customer_requests.txt'
 
 # --- Estado del Cliente ---
 current_request_index = 0
@@ -50,12 +47,12 @@ service_notification_consumer = KafkaConsumer(
     group_id=f'customer_notifications_group_{CLIENT_ID}' # Un group_id único para este cliente
 )
 
-# NUEVO: Kafka Consumer para actualizaciones del mapa
+# Kafka Consumer para actualizaciones del mapa
 map_update_consumer = KafkaConsumer(
     'map_updates',
     bootstrap_servers=[KAFKA_BROKER],
     value_deserializer=lambda v: json.loads(v.decode('utf-8')),
-    group_id=f'map_viewer_group_customer_{CLIENT_ID}' # Cada cliente necesita su propio group_id
+    group_id=f'map_viewer_group_customer_{CLIENT_ID}'
 )
 
 def send_kafka_message(topic, message):
@@ -63,7 +60,7 @@ def send_kafka_message(topic, message):
     try:
         customer_producer.send(topic, message)
         customer_producer.flush() 
-        # print(f"Cliente {CLIENT_ID} enviado a {topic}: {message}") # Descomentar para depuración
+        print(f"Cliente {CLIENT_ID} enviado a {topic}: {message}")
     except Exception as e:
         print(f"Cliente {CLIENT_ID}: Error enviando mensaje a Kafka ({topic}): {e}")
 
@@ -113,8 +110,7 @@ def process_service_notifications():
             if data.get("client_id") == CLIENT_ID:
                 print(f"Cliente {CLIENT_ID}: ¡Servicio completado por Taxi {data['taxi_id']} en {data['destination_id']}!")
                 service_status = "completed"
-                current_assigned_taxi = None # El taxi ya no está asignado
-                # Aquí el bucle principal continuará con la siguiente solicitud
+                current_assigned_taxi = None 
 
 def process_map_updates():
     """Escucha y procesa actualizaciones del mapa de la Central."""
@@ -128,8 +124,8 @@ def process_map_updates():
             draw_map() 
 
 def clear_console():
-    """Limpia la consola."""
-    os.system('cls' if os.name == 'nt' else 'clear')
+    if os.environ.get('TERM'):
+        os.system('cls' if os.name == 'nt' else 'clear')
 
 def draw_map():
     """Dibuja el mapa ASCII en la consola."""
@@ -166,7 +162,6 @@ def draw_map():
     for taxi_id, taxi_data in current_taxi_fleet_state.items():
         tx, ty = taxi_data['x'], taxi_data['y']
         if 0 <= ty < grid_height and 0 <= tx < grid_width:
-            # Los taxis se dibujan encima de clientes/ubicaciones si coinciden
             grid[ty][tx] = f"[T{taxi_id}]"
 
     # Imprimir el grid (invertir Y para que (0,0) sea abajo izquierda)
@@ -201,21 +196,20 @@ def main():
             service_status = "pending" # Marcar como pendiente después de enviar
         
         # Esperar hasta que el servicio sea procesado (aceptado/denegado/completado)
-        # Esto es un bucle de espera, podría ser más elegante con eventos o callbacks
         while service_status == "pending" or service_status == "accepted":
-            time.sleep(1) # Esperar un poco antes de re-chequear el estado
-            # print(f"Cliente {CLIENT_ID}: Esperando procesamiento de solicitud. Estado: {service_status}") # Depuración
+            time.sleep(1) 
+            print(f"Cliente {CLIENT_ID}: Esperando procesamiento de solicitud. Estado: {service_status}") # Depuración
 
         if service_status == "completed":
             print(f"Cliente {CLIENT_ID}: Servicio '{current_request_index + 1}' completado. Pasando a la siguiente solicitud (si existe).")
             current_request_index += 1
-            service_status = "idle" # Resetear estado para la siguiente solicitud
-            time.sleep(4) # Esperar 4 segundos antes de la siguiente solicitud (requisito de la práctica)
+            service_status = "idle" 
+            time.sleep(4) 
         elif service_status == "denied":
             print(f"Cliente {CLIENT_ID}: Servicio '{current_request_index + 1}' denegado. Intentando la siguiente solicitud (si existe).")
             current_request_index += 1
-            service_status = "idle" # Resetear estado
-            time.sleep(4) # Esperar 4 segundos
+            service_status = "idle"
+            time.sleep(4) 
 
     print(f"Cliente {CLIENT_ID}: Todas las solicitudes procesadas. Saliendo.")
 

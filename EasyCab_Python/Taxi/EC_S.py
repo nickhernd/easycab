@@ -6,30 +6,28 @@ import threading
 from kafka import KafkaProducer
 import argparse
 
+# Argumentos de línea de comandos para configurar el sensor
 argparse = argparse.ArgumentParser(description='EasyCab Sensor (EC_S) para simular y enviar datos de sensores de taxis.')
 argparse.add_argument('--ip_port_ecde', type=str, default='localhost:9095', help='Dirección IP y puerto del ECDE (EasyCab Data Engine).')
 argparse.add_argument('--id_taxi', type=int, required=True, help='ID del taxi al que está asociado este sensor.')
 argparse.add_argument('--kafka_broker', type=str, default='localhost:9092', help='Dirección del broker de Kafka para enviar mensajes.')
 args = argparse.parse_args()
 
-# Obtiene la ruta del directorio del script actual (ej. Sensors/)
-script_dir = os.path.dirname(__file__)
-# Obtiene la ruta del directorio raíz del proyecto (EasyCab_Python/)
-project_root = os.path.abspath(os.path.join(script_dir, '..'))
 # Añade el directorio raíz del proyecto a sys.path para importar módulos comunes
+script_dir = os.path.dirname(__file__)
+project_root = os.path.abspath(os.path.join(script_dir, '..'))
 sys.path.insert(0, project_root)
 
 from common.message_protocol import MessageProtocol
 
 # --- Configuración del Sensor ---
-# El ID del taxi al que está asociado este sensor
 TAXI_ID = args.id_taxi
 KAFKA_BROKER = args.kafka_broker
 SENSOR_UPDATE_INTERVAL = 1 # Intervalo de envío de datos del sensor en segundos
 IP_PORT_ECDE = args.ip_port_ecde
 
 # --- Estado del Sensor ---
-current_sensor_status = MessageProtocol.STATUS_OK # Inicialmente OK
+current_sensor_status = MessageProtocol.STATUS_OK # Estado inicial del sensor
 anomaly_details = "" # Detalles de la anomalía si el estado es KO
 
 # --- Kafka Producer para el Sensor ---
@@ -43,12 +41,11 @@ def send_kafka_message(topic, message):
     try:
         sensor_producer.send(topic, message)
         sensor_producer.flush()
-        # print(f"Sensor (Taxi {TAXI_ID}): Enviado a {topic}: {message}") # Descomentar para depuración
     except Exception as e:
         print(f"Sensor (Taxi {TAXI_ID}): Error enviando mensaje a Kafka ({topic}): {e}")
 
 def simulate_and_send_sensor_data():
-    """Bucle principal para simular y enviar datos del sensor."""
+    """Simula y envía periódicamente el estado del sensor."""
     global current_sensor_status, anomaly_details
     while True:
         sensor_msg = MessageProtocol.create_sensor_update(
@@ -60,7 +57,7 @@ def simulate_and_send_sensor_data():
         time.sleep(SENSOR_UPDATE_INTERVAL)
 
 def listen_for_input():
-    """Escucha la entrada del usuario para cambiar el estado del sensor."""
+    """Permite al usuario simular fallos o restauraciones del sensor mediante la entrada de teclado."""
     global current_sensor_status, anomaly_details
     print(f"Sensor (Taxi {TAXI_ID}): Pulsa 'k' para simular un fallo (KO), 'o' para restaurar (OK).")
     while True:
@@ -85,15 +82,15 @@ def listen_for_input():
 def main():
     print(f"Iniciando EasyCab Sensor (EC_S) para el Taxi ID: {TAXI_ID}")
 
-    # Iniciar el hilo para simular y enviar datos del sensor
+    # Inicia el hilo para simular y enviar datos del sensor
     sensor_thread = threading.Thread(target=simulate_and_send_sensor_data, daemon=True)
     sensor_thread.start()
 
-    # Iniciar el hilo para escuchar la entrada del usuario (para simular fallos)
+    # Inicia el hilo para escuchar la entrada del usuario
     input_thread = threading.Thread(target=listen_for_input, daemon=True)
     input_thread.start()
 
-    # Mantener el programa principal en ejecución
+    # Mantiene el programa principal en ejecución
     try:
         while True:
             time.sleep(1)

@@ -1,0 +1,21 @@
+version: '3.8'
+services:
+  ctc:
+    build: ../Traffic
+    ports: 
+      - "5001:5001"
+    environment:
+      - OPENWEATHER_API_KEY=f23280b7dd0ea5985e196bac7746037b
+      - KAFKA_BROKER=${KAFKA_IP}:29092
+    command: ["python3", "EC_CTC.py", "--kafka_broker", "${KAFKA_IP}:29092"]
+    volumes:
+      - ../common:/common
+
+  customer:
+    build: ../Customer
+    environment:
+      - KAFKA_BROKER=${KAFKA_IP}:29092
+      - TERM=xterm
+    command: ["python3", "EC_Customer.py", "--kafka_broker", "${KAFKA_IP}:29092", "--client_id", "a"]
+    volumes:
+      - ../common:/common

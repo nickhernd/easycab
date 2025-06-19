@@ -1,37 +1,40 @@
+print("=== EC_Central.py iniciado ===")
+import sys
+print("Python version:", sys.version)
+
 import socket
 import threading
 import json
 import time
 import sys
 import os
-import copy # Importar copy para la función de deepcopy
+import argparse
 from kafka import KafkaProducer, KafkaConsumer
+import copy
 import requests
 from datetime import datetime
 import secrets
-from Central.audit_api import add_audit_event, run_audit_api
-import argparse
 
-parser = argparse.ArgumentParser(description="EasyCab Central Configuration")
-
-parser.add_argument('--listen_port', type= int, default=65432)
-parser.add_argument('--ip_port_broker', type=str, default='localhost:9094')
-args = parser.parse_args()
-
-# Obtiene la ruta del directorio del script actual (Central/)
 script_dir = os.path.dirname(__file__)
-# Obtiene la ruta del directorio EasyCab_Python/
 project_root = os.path.abspath(os.path.join(script_dir, '..'))
-# Añade el directorio raíz del proyecto a sys.path
 sys.path.insert(0, project_root)
+sys.path.insert(0, '/common')
 
-from common.message_protocol import MessageProtocol 
+from common.message_protocol import MessageProtocol
 
 # --- Configuración General ---
-CENTRAL_PORT_AUTH = args.listen_port # Puerto para autenticación de taxis (via sockets)
-KAFKA_BROKER = args.ip_port_broker # Dirección del broker de Kafka
-MAP_UPDATE_INTERVAL = 1 # Segundos entre cada actualización del mapa
+argparser = argparse.ArgumentParser()
+argparser.add_argument('--listen_port', type=int, default=int(os.environ.get('CENTRAL_PORT_AUTH', 6000)), help='Puerto para autenticación de taxis (via sockets)')
+argparser.add_argument('--ip_port_broker', type=str, default=os.environ.get('KAFKA_BROKER', 'localhost:9092'), help='Dirección del broker de Kafka')
+argparser.add_argument('--central_host', type=str, default=os.environ.get('CENTRAL_HOST', '0.0.0.0'), help='Host/IP para el servidor de autenticación de taxis')
+argparser.add_argument('--traffic_api', type=str, default=os.environ.get('TRAFFIC_API', 'http://traffic:5001/traffic_status'), help='URL del API REST de tráfico')
+args = argparser.parse_args()
 
+CENTRAL_PORT_AUTH = args.listen_port
+KAFKA_BROKER = args.ip_port_broker
+CENTRAL_HOST = args.central_host
+TRAFFIC_API_URL = args.traffic_api
+MAP_UPDATE_INTERVAL = 1
 MAP_SIZE = 20
 
 def wrap_position(x, y):
@@ -48,41 +51,73 @@ TAXI_FLEET = {}
 # Status: "pending", "assigned", "picked_up", "completed", "cancelled"
 CUSTOMER_REQUESTS = {}
 
-# --- Kafka Producers ---
-central_producer = KafkaProducer(
-    bootstrap_servers=[KAFKA_BROKER],
-    value_serializer=lambda v: json.dumps(v).encode('utf-8')
-)
+# --- Variables globales de Kafka ---
+central_producer = None
+taxi_position_consumer = None
+sensor_data_consumer = None
+customer_requests_consumer = None
+central_service_notification_consumer = None
 
-# --- Kafka Consumers ---
-taxi_position_consumer = KafkaConsumer(
-    'taxi_movements',
-    bootstrap_servers=[KAFKA_BROKER],
-    value_deserializer=lambda v: json.loads(v.decode('utf-8')),
-    group_id='central_group'
-)
+# --- Auditoría ---
+AUDIT_LOG = [] # Almacena los eventos de auditoría
+TRAFFIC_STATUS = "UNKNOWN" # OK, KO, UNKNOWN
 
+def add_audit_event(event):
+    # En una aplicación real, esto se guardaría en una base de datos o sistema de logs.
+    pass
 
-sensor_data_consumer = KafkaConsumer(
-    'sensor_data',
-    bootstrap_servers=[KAFKA_BROKER],
-    value_deserializer=lambda v: json.loads(v.decode('utf-8')),
-    group_id='central_group'
-)
+def log_audit_event(who, ip, action, description):
+    """Registra un evento de auditoría estructurada."""
+    now = datetime.now().isoformat()
+    event = {
+        "timestamp": now,
+        "who": who,
+        "ip": ip,
+        "action": action,
+        "description": description
+    }
+    print(f"[AUDIT] {now} | {who} | {ip} | {action} | {description}")
+    AUDIT_LOG.append(event)
+    add_audit_event(event)
 
-customer_requests_consumer = KafkaConsumer(
-    'customer_requests',
-    bootstrap_servers=[KAFKA_BROKER],
-    value_deserializer=lambda v: json.loads(v.decode('utf-8')),
-    group_id='central_group'
-)
+def check_traffic_status_periodically():
+    """Consulta el API REST de EC_CTC cada 10 segundos para conocer el estado del tráfico."""
+    global TRAFFIC_STATUS
+    while True:
+        try:
+            response = requests.get(TRAFFIC_API_URL)
+            if response.status_code == 200:
+                data = response.json()
+                new_status = data.get("status", "UNKNOWN")
+                if new_status != TRAFFIC_STATUS:
+                    log_audit_event(
+                        who="EC_Central",
+                        ip=CENTRAL_HOST,
+                        action="TrafficStatusChange",
+                        description=f"Estado del tráfico cambiado a {new_status}"
+                    )
+                TRAFFIC_STATUS = new_status
+            else:
+                log_audit_event(
+                    who="EC_Central",
+                    ip=CENTRAL_HOST,
+                    action="TrafficStatusError",
+                    description=f"Respuesta inesperada del API CTC: {response.status_code}"
+                )
+        except Exception as e:
+            log_audit_event(
+                who="EC_Central",
+                ip=CENTRAL_HOST,
+                action="TrafficStatusError",
+                description=f"Error al consultar el API CTC: {e}"
+            )
+        time.sleep(10)
 
-central_service_notification_consumer = KafkaConsumer(
-    'service_notifications',
-    bootstrap_servers=[KAFKA_BROKER],
-    value_deserializer=lambda v: json.loads(v.decode('utf-8')),
-    group_id='central_notification_processor_group'
-)
+# Dummy function for run_audit_api to allow the code to run without an actual API implementation
+def run_audit_api():
+    print("Audit API server placeholder started.")
+    # In a real scenario, this would start a Flask/Django server for the audit API
+    pass
 
 # --- Funciones de Carga de Datos ---
 def load_city_map():
@@ -114,7 +149,7 @@ def load_taxi_fleet():
                     TAXI_FLEET[taxi_id] = {
                         "x": x, "y": y, "status": status, "service_id": None,
                         "current_destination_coords": None,
-                        "initial_x": x, "initial_y": y  # Guarda la posición inicial
+                        "initial_x": x, "initial_y": y   # Guarda la posición inicial
                     }
         print(f"Flota de taxis cargada: {TAXI_FLEET}")
     except FileNotFoundError:
@@ -123,11 +158,53 @@ def load_taxi_fleet():
         print(f"Error al cargar la flota de taxis: {e}")
 
 # --- Funciones de Kafka ---
+def init_kafka_clients():
+    """Inicializa los productores y consumidores de Kafka."""
+    global central_producer, taxi_position_consumer, sensor_data_consumer, customer_requests_consumer, central_service_notification_consumer
+    try:
+        central_producer = KafkaProducer(
+            bootstrap_servers=[KAFKA_BROKER],
+            value_serializer=lambda v: json.dumps(v).encode('utf-8')
+        )
+        taxi_position_consumer = KafkaConsumer(
+            'taxi_movements',
+            bootstrap_servers=[KAFKA_BROKER],
+            value_deserializer=lambda x: json.loads(x.decode('utf-8')),
+            group_id='central_group',
+            auto_offset_reset='latest' # 'earliest' para empezar desde el principio, 'latest' para nuevos mensajes
+        )
+        sensor_data_consumer = KafkaConsumer(
+            'sensor_data',
+            bootstrap_servers=[KAFKA_BROKER],
+            value_deserializer=lambda x: json.loads(x.decode('utf-8')),
+            group_id='central_group',
+            auto_offset_reset='latest'
+        )
+        customer_requests_consumer = KafkaConsumer(
+            'customer_requests',
+            bootstrap_servers=[KAFKA_BROKER],
+            value_deserializer=lambda x: json.loads(x.decode('utf-8')),
+            group_id='central_group',
+            auto_offset_reset='latest'
+        )
+        central_service_notification_consumer = KafkaConsumer(
+            'service_notifications',
+            bootstrap_servers=[KAFKA_BROKER],
+            value_deserializer=lambda x: json.loads(x.decode('utf-8')),
+            group_id='central_service_consumer_group',
+            auto_offset_reset='latest'
+        )
+        print("Clientes Kafka inicializados correctamente.")
+    except Exception as e:
+        print(f"Error al inicializar clientes Kafka: {e}")
+        sys.exit(1) # Salir si Kafka no puede inicializarse
+
+
 def send_central_update(topic, message):
     """Envía un mensaje JSON a un tema de Kafka usando el producer central."""
     try:
         central_producer.send(topic, message)
-        # print(f"Enviado a {topic}: {message}") # Descomentar para depuración intensiva
+        print(f"[Central] Enviado a {topic}: {message}")
         central_producer.flush()
     except Exception as e:
         print(f"Error al enviar mensaje a Kafka ({topic}): {e}")
@@ -193,8 +270,8 @@ def process_taxi_movement_messages():
                 # Si está volviendo a base y ha llegado
                 elif status == "returning_to_base" and taxi["current_destination_coords"] and \
                      (x, y) == (taxi["current_destination_coords"]["x"], taxi["current_destination_coords"]["y"]):
-                    taxi["status"] = "disabled"  # Deshabilita el taxi al llegar a base
-                    taxi["service_id"] = None  # Limpia el ID de servicio
+                    taxi["status"] = "disabled"   # Deshabilita el taxi al llegar a base
+                    taxi["service_id"] = None   # Limpia el ID de servicio
                     taxi["current_destination_coords"] = None
             else:
                 print(f"Advertencia: Movimiento de taxi no registrado: {taxi_id}")
@@ -214,7 +291,7 @@ def process_sensor_data_messages():
                 elif status == MessageProtocol.STATUS_OK:
                     if TAXI_FLEET[taxi_id]["status"] == "disabled":
                         print(f"Taxi {taxi_id} se ha recuperado (sensores OK). Marcando como libre.")
-                        TAXI_FLEET[taxi_id]["status"] = "free" 
+                        TAXI_FLEET[taxi_id]["status"] = "free"
             else:
                 print(f"Advertencia: Actualización de sensor de taxi no registrado: {taxi_id}")
 
@@ -225,21 +302,21 @@ def draw_map_console(city_map, taxi_fleet, customer_requests):
     # Localizaciones (mayúsculas, fondo azul)
     for loc_id, coords in city_map.items():
         x, y = wrap_position(coords['x'], coords['y'])
-        grid[y][x] = f"\033[44m {loc_id} \033[0m"  # Fondo azul
+        grid[y][x] = f"\033[44m {loc_id} \033[0m"   # Fondo azul
 
     # Clientes (minúsculas, fondo amarillo)
     for client_id, req_data in customer_requests.items():
         if "origin_coords" in req_data:
             x, y = wrap_position(req_data["origin_coords"]["x"], req_data["origin_coords"]["y"])
-            grid[y][x] = f"\033[43m {client_id[0].lower()} \033[0m"  # Fondo amarillo
+            grid[y][x] = f"\033[43m {client_id[0].lower()} \033[0m"   # Fondo amarillo
 
     # Taxis (número, verde si moviéndose, rojo si parado)
     for taxi_id, taxi_data in taxi_fleet.items():
         x, y = wrap_position(taxi_data["x"], taxi_data["y"])
         if taxi_data["status"] in ["moving_to_customer", "moving_to_destination"]:
-            color = "\033[42m"  # Fondo verde
+            color = "\033[42m"   # Fondo verde
         else:
-            color = "\033[41m"  # Fondo rojo
+            color = "\033[41m"   # Fondo rojo
         grid[y][x] = f"{color}{str(taxi_id).rjust(3)}\033[0m"
 
     # Imprimir el grid (Y invertido para que 0,0 sea abajo izquierda)
@@ -254,9 +331,9 @@ def process_customer_request_messages():
         if msg_value.get("operation_code") == MessageProtocol.OP_CUSTOMER_REQUEST:
             client_id = msg_value["data"]["client_id"]
             destination_id = msg_value["data"]["destination_id"]
-            
-            client_origin_id =  'a'  # Asignar un origen por defecto
-            
+
+            client_origin_id =   'a'   # Asignar un origen por defecto
+
             if client_origin_id not in CITY_MAP:
                 print(f"Error: Origen del cliente '{client_origin_id}' no encontrado en el mapa.")
                 notification_msg = MessageProtocol.create_service_notification(
@@ -332,17 +409,17 @@ def assign_taxi_to_request(client_id, destination_id):
 
 def process_service_completed_messages():
     """Procesa los mensajes del tema 'service_notifications' cuando el taxi finaliza un servicio."""
-    for message in central_service_notification_consumer: 
+    for message in central_service_notification_consumer:
         msg_value = message.value
         taxi_id = msg_value["data"]["taxi_id"]
 
-        if msg_value.get("operation_code") == MessageProtocol.OP_SERVICE_COMPLETED:            
-            
+        if msg_value.get("operation_code") == MessageProtocol.OP_SERVICE_COMPLETED:
+
             client_id = msg_value["data"]["client_id"]
             destination_id = msg_value["data"]["destination_id"]
 
             print(f"Servicio completado para cliente {client_id} por Taxi {taxi_id} en destino {destination_id}")
-            
+
             # Elimina al cliente del estado
             if client_id in CUSTOMER_REQUESTS:
                 del CUSTOMER_REQUESTS[client_id]
@@ -363,7 +440,7 @@ def process_service_completed_messages():
                 taxi_id=taxi_id, command="RETURN_TO_BASE", new_destination_coords=initial_coords
             )
             send_central_update('taxi_commands', MessageProtocol.parse_message(taxi_command_msg))
-                
+
 
 # --- Función para enviar el estado completo del mapa ---
 def send_map_updates_periodically():
@@ -375,11 +452,12 @@ def send_map_updates_periodically():
             customer_requests=copy.deepcopy(CUSTOMER_REQUESTS)
         )
         send_central_update('map_updates', MessageProtocol.parse_message(map_state_message))
-        # draw_map_console(CITY_MAP, TAXI_FLEET, CUSTOMER_REQUESTS)  # <-- Elimina o comenta esta línea
+        # draw_map_console(CITY_MAP, TAXI_FLEET, CUSTOMER_REQUESTS)
         time.sleep(MAP_UPDATE_INTERVAL)
 
+
 # --- Funciones de Sockets (Autenticación de Taxis) ---
-ACTIVE_TOKENS = {}  # {taxi_id: token}
+ACTIVE_TOKENS = {}   # {taxi_id: token}
 
 def generate_token():
     return secrets.token_hex(16)
@@ -446,6 +524,7 @@ def main():
     print("Iniciando EasyCab Central...")
     load_city_map()
     load_taxi_fleet()
+    init_kafka_clients()   # Inicializa los clientes Kafka después de cargar datos
 
     # Iniciar hilos para los consumidores de Kafka
     threading.Thread(target=process_taxi_movement_messages, daemon=True).start()
@@ -466,52 +545,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-TRAFFIC_STATUS = "UNKNOWN"  # OK, KO, UNKNOWN
-
-def log_audit_event(who, ip, action, description):
-    """Registra un evento de auditoría estructurada."""
-    now = datetime.now().isoformat()
-    event = {
-        "timestamp": now,
-        "who": who,
-        "ip": ip,
-        "action": action,
-        "description": description
-    }
-    print(f"[AUDIT] {now} | {who} | {ip} | {action} | {description}")
-    AUDIT_LOG.append(event)
-    add_audit_event(event)
-
-def check_traffic_status_periodically():
-    """Consulta el API REST de EC_CTC cada 10 segundos para conocer el estado del tráfico."""
-    global TRAFFIC_STATUS
-    while True:
-        try:
-            response = requests.get("http://localhost:5001/traffic_status")
-            if response.status_code == 200:
-                data = response.json()
-                new_status = data.get("status", "UNKNOWN")
-                if new_status != TRAFFIC_STATUS:
-                    log_audit_event(
-                        who="EC_Central",
-                        ip="localhost",
-                        action="TrafficStatusChange",
-                        description=f"Estado del tráfico cambiado a {new_status}"
-                    )
-                TRAFFIC_STATUS = new_status
-            else:
-                log_audit_event(
-                    who="EC_Central",
-                    ip="localhost",
-                    action="TrafficStatusError",
-                    description=f"Respuesta inesperada del API CTC: {response.status_code}"
-                )
-        except Exception as e:
-            log_audit_event(
-                who="EC_Central",
-                ip="localhost",
-                action="TrafficStatusError",
-                description=f"Error al consultar el API CTC: {e}"
-            )
-        time.sleep(10)

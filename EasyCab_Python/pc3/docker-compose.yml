@@ -1,0 +1,15 @@
+version: '3.8'
+services:
+  registry:
+    build: ../Regestry
+    ports: ["5002:5002"]
+    environment:
+      - KAFKA_BROKER=${KAFKA_IP}:29092
+    command: ["python3", "EC_Registry.py"]
+
+  taxi:
+    build: ../Taxi
+    environment:
+      - KAFKA_BROKER=${KAFKA_IP}:29092
+    command: ["python3", "EC_DE.py", "--ip_port_ecc", "${KAFKA_IP}:65432", "--kafka_broker", "${KAFKA_IP}:29092", "--ip_port_ecs", "registry:5002", "--taxi_id", "1"]
+    depends_on: [registry]
