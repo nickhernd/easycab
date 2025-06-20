@@ -7,12 +7,14 @@ import threading
 import os
 from kafka import KafkaProducer, KafkaConsumer
 from collections import deque
-import requests
 import argparse
+import http.client
+import ssl
 
 # Argumentos de línea de comandos para configuración
 argparser = argparse.ArgumentParser(description='Taxi Digital Engine (EC_DE) para EasyCab.')
-argparser.add_argument('--ip_port_ecc', type=str, default='localhost:9096')
+argparser.add_argument('--ip_ecc_host', type=str, default='localhost', help='Hostname or IP for EC_Central authentication.')
+argparser.add_argument('--ip_ecc_port', type=int, default=65432, help='Port for EC_Central authentication.')
 argparser.add_argument('--kafka_broker', type=str, default='localhost:9094')
 argparser.add_argument('--ip_port_ecs', type=str, default='localhost:9096')
 argparser.add_argument('--taxi_id', type=int, default=1, help='ID del taxi (por defecto 1)')
@@ -27,8 +29,8 @@ from common.message_protocol import MessageProtocol
 
 # --- Configuración del Taxi ---
 TAXI_ID = args.taxi_id
-CENTRAL_HOST = args.ip_port_ecc
-CENTRAL_PORT_AUTH = 65432
+CENTRAL_HOST = args.ip_ecc_host
+CENTRAL_PORT_AUTH = args.ip_ecc_port
 KAFKA_BROKER = args.kafka_broker
 IP_PORT_ECS = args.ip_port_ecs
 
@@ -111,7 +113,7 @@ def send_current_position():
     position_msg = MessageProtocol.create_taxi_position_update(TAXI_ID, current_x, current_y, status)
     msg_dict = MessageProtocol.parse_message(position_msg)
     msg_dict["token"] = taxi_token
-    send_kafka_message('taxi_movements', json.dumps(msg_dict))
+    send_kafka_message('taxi_movements', msg_dict)
 
 MAP_SIZE = 20
 
@@ -149,25 +151,41 @@ def simulate_movement():
         return
 
     if target_x is not None and target_y is not None:
+        # Log para depuración
+        print(f"[DEBUG] Taxi {TAXI_ID} | Estado: {status} | Pos: ({current_x},{current_y}) | Destino: ({target_x},{target_y})")
         if (current_x, current_y) == (target_x, target_y):
             if status == "moving_to_customer":
-                print(f"Taxi {TAXI_ID}: Cliente {assigned_service_id} recogido en ({current_x},{current_y}). Avisando a la Central y esperando destino final...")
+                print(f"Taxi {TAXI_ID}: Cliente {assigned_service_id} recogido en ({current_x},{current_y}). Avisando a la Central...")
+                # Enviar mensaje explícito de recogida a la Central
+                pickup_msg = MessageProtocol.create_taxi_pickup(
+                    taxi_id=TAXI_ID, client_id=assigned_service_id, pickup_coords={"x": current_x, "y": current_y}
+                )
+                send_kafka_message('taxi_pickups', MessageProtocol.parse_message(pickup_msg))
                 send_current_position()
+                status = "waiting_goto_dest"  # Espera explícita del comando de la Central
+                # Espera a que la Central envíe el comando GOTO_DEST
             elif status == "moving_to_destination":
                 print(f"Taxi {TAXI_ID}: Cliente {assigned_service_id} dejado en destino final {final_destination_id} ({current_x},{current_y}). Avisando a la Central...")
-                service_completed_msg = MessageProtocol.create_service_completed(
-                    client_id=assigned_service_id, taxi_id=TAXI_ID, destination_id=final_destination_id
+                # Enviar mensaje explícito de dropoff a la Central
+                dropoff_msg = MessageProtocol.create_taxi_dropoff(
+                    taxi_id=TAXI_ID, client_id=assigned_service_id, destination_id=final_destination_id, dropoff_coords={"x": current_x, "y": current_y}
                 )
-                send_kafka_message('service_notifications', MessageProtocol.parse_message(service_completed_msg))
+                send_kafka_message('taxi_dropoffs', MessageProtocol.parse_message(dropoff_msg))
+                send_current_position()
+                # Espera a que la Central envíe el comando RETURN_TO_BASE
             elif status == "returning_to_base":
                 print(f"Taxi {TAXI_ID}: He vuelto a la base ({current_x},{current_y}). Quedo libre.")
                 status = "free"
-                target_x = 0
-                target_y = 0
+                target_x = None
+                target_y = None
                 send_current_position()
             else:
+                if status == "waiting_goto_dest":
+                    return
                 print(f"Taxi {TAXI_ID}: Estado inesperado al llegar a destino: {status}")
         else:
+            # Log para depuración
+            print(f"[DEBUG] Taxi {TAXI_ID} avanzando de ({current_x},{current_y}) a siguiente paso hacia ({target_x},{target_y})")
             new_x, new_y = calculate_next_step(current_x, current_y, target_x, target_y)
             if (new_x, new_y) != (current_x, current_y):
                 current_x = new_x
@@ -210,7 +228,8 @@ def process_taxi_commands():
         msg_value = message.value
         if msg_value.get("operation_code") == MessageProtocol.OP_TAXI_COMMAND:
             command_data = msg_value["data"]
-            if command_data.get("taxi_id") == TAXI_ID:
+            # Permite que el taxi acepte comandos tanto para su ID numérico como para su ID string (ej: '1a')
+            if str(command_data.get("taxi_id")) == str(TAXI_ID) or str(command_data.get("taxi_id")) == str(TAXI_ID) + "a":
                 command = command_data.get("command")
                 new_destination_coords = command_data.get("new_destination_coords")
                 client_id_for_service = command_data.get("client_id")
@@ -298,15 +317,37 @@ def draw_map():
     print("-" * 40)
 
 def register_taxi_in_registry():
-    """Registra el taxi en el Registry externo."""
-    url = "https://localhost:5002/register"
+    """Registra el taxi en el Registry externo usando http.client."""
+    global TAXI_ID, IP_PORT_ECS
+
+    # Parse the host and port from IP_PORT_ECS (e.g., 'registry:5002')
+    registry_host = IP_PORT_ECS.split(':')[0]
+    registry_port = int(IP_PORT_ECS.split(':')[-1])
+
+    url_path = "/register"
+    headers = {'Content-Type': 'application/json'}
+    payload = json.dumps({"taxi_id": TAXI_ID})
+
+    print(f"Taxi {TAXI_ID}: Intentando registrar en Registry en https://{registry_host}:{registry_port}{url_path}...")
+
     try:
-        response = requests.post(url, json={"taxi_id": TAXI_ID}, verify=False)
-        if response.status_code == 200 and response.json().get("status") == "OK":
-            print(f"Taxi {TAXI_ID}: Registrado correctamente en Registry.")
-            return True
+        # Use HTTPSConnection for HTTPS
+        conn = http.client.HTTPSConnection(registry_host, registry_port, context=ssl._create_unverified_context())
+        conn.request("POST", url_path, body=payload, headers=headers)
+        response = conn.getresponse()
+        response_data = response.read().decode('utf-8')
+        conn.close()
+
+        if response.status == 200:
+            response_json = json.loads(response_data)
+            if response_json.get("status") == "OK":
+                print(f"Taxi {TAXI_ID}: Registrado correctamente en Registry.")
+                return True
+            else:
+                print(f"Taxi {TAXI_ID}: Error al registrar en Registry: {response_data}")
+                return False
         else:
-            print(f"Taxi {TAXI_ID}: Error al registrar en Registry: {response.text}")
+            print(f"Taxi {TAXI_ID}: HTTP Error {response.status} al registrar en Registry: {response_data}")
             return False
     except Exception as e:
         print(f"Taxi {TAXI_ID}: Error al conectar con Registry: {e}")

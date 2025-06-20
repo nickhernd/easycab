@@ -27,4 +27,4 @@ def is_registered(taxi_id):
     return jsonify({"registered": taxi_id in REGISTERED_TAXIS})
 
 if __name__ == "__main__":
-    app.run(port=5002, ssl_context=('cert.pem', 'key.pem'))
+    app.run(host="0.0.0.0", port=5002, ssl_context=('cert.pem', 'key.pem'))

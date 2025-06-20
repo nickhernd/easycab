@@ -57,6 +57,8 @@ taxi_position_consumer = None
 sensor_data_consumer = None
 customer_requests_consumer = None
 central_service_notification_consumer = None
+taxi_pickup_consumer = None
+taxi_dropoff_consumer = None
 
 # --- Auditoría ---
 AUDIT_LOG = [] # Almacena los eventos de auditoría
@@ -160,7 +162,7 @@ def load_taxi_fleet():
 # --- Funciones de Kafka ---
 def init_kafka_clients():
     """Inicializa los productores y consumidores de Kafka."""
-    global central_producer, taxi_position_consumer, sensor_data_consumer, customer_requests_consumer, central_service_notification_consumer
+    global central_producer, taxi_position_consumer, sensor_data_consumer, customer_requests_consumer, central_service_notification_consumer, taxi_pickup_consumer, taxi_dropoff_consumer
     try:
         central_producer = KafkaProducer(
             bootstrap_servers=[KAFKA_BROKER],
@@ -194,6 +196,20 @@ def init_kafka_clients():
             group_id='central_service_consumer_group',
             auto_offset_reset='latest'
         )
+        taxi_pickup_consumer = KafkaConsumer(
+            'taxi_pickups',
+            bootstrap_servers=[KAFKA_BROKER],
+            value_deserializer=lambda x: json.loads(x.decode('utf-8')),
+            group_id='central_group',
+            auto_offset_reset='latest'
+        )
+        taxi_dropoff_consumer = KafkaConsumer(
+            'taxi_dropoffs',
+            bootstrap_servers=[KAFKA_BROKER],
+            value_deserializer=lambda x: json.loads(x.decode('utf-8')),
+            group_id='central_group',
+            auto_offset_reset='latest'
+        )
         print("Clientes Kafka inicializados correctamente.")
     except Exception as e:
         print(f"Error al inicializar clientes Kafka: {e}")
@@ -211,6 +227,7 @@ def send_central_update(topic, message):
 
 def process_taxi_movement_messages():
     """Procesa los mensajes del tema 'taxi_movements'."""
+    global TAXI_FLEET, CUSTOMER_REQUESTS
     for message in taxi_position_consumer:
         msg_value = message.value
         if msg_value.get("operation_code") == MessageProtocol.OP_TAXI_POSITION:
@@ -219,62 +236,102 @@ def process_taxi_movement_messages():
             y = msg_value["data"]["y"]
             status = msg_value["data"]["status"]
 
-            # Imprimir posicion del taxi actual
-            print(f"Taxi {taxi_id} moviéndose a ({x}, {y}) con estado '{status}'")
+            # Manejo de cambio de identificador
+            original_taxi_id = taxi_id
+            if isinstance(taxi_id, str) and taxi_id.endswith('a'):
+                base_taxi_id = taxi_id[:-1]
+            else:
+                base_taxi_id = str(taxi_id)
 
             if taxi_id in TAXI_FLEET:
                 taxi = TAXI_FLEET[taxi_id]
-                taxi["x"] = x
-                taxi["y"] = y
-                taxi["status"] = status
-
-                # Si está yendo a recoger al cliente y ha llegado
-                if status == "moving_to_customer" and taxi["service_id"]:
-                    client_id = taxi["service_id"]
-                    client_coords = CUSTOMER_REQUESTS[client_id]["origin_coords"]
-                    if (x, y) == (client_coords["x"], client_coords["y"]):
-                        destination_id = CUSTOMER_REQUESTS[client_id]["destination_id"]
-                        final_destination_coords = CITY_MAP[destination_id]
-                        print(f"Taxi {taxi_id} ha recogido al cliente {client_id} en ({x},{y}). Enviando comando para ir al destino final {destination_id} ({final_destination_coords['x']},{final_destination_coords['y']})")
-                        # Cambia el estado del taxi
-                        taxi["status"] = "moving_to_destination"
-                        taxi["current_destination_coords"] = final_destination_coords
-                        # Cambia el estado del cliente (opcional, para trazabilidad)
-                        CUSTOMER_REQUESTS[client_id]["status"] = "picked_up"
-                        # Manda comando para ir al destino
-                        taxi_command_msg = MessageProtocol.create_taxi_command(
-                            taxi_id=taxi_id, command="GOTO_DEST", new_destination_coords=final_destination_coords, client_id=client_id, final_destination_id=destination_id
-                        )
-                        send_central_update('taxi_commands', MessageProtocol.parse_message(taxi_command_msg))
-
-                # Si está yendo al destino y ha llegado
-                elif status == "moving_to_destination" and taxi["current_destination_coords"] and \
-                     (x, y) == (taxi["current_destination_coords"]["x"], taxi["current_destination_coords"]["y"]):
-                    client_id = taxi["service_id"]
-                    # Notifica servicio completado
-                    service_completed_msg = MessageProtocol.create_service_completed(
-                        client_id=client_id, taxi_id=taxi_id, destination_id=CUSTOMER_REQUESTS[client_id]["destination_id"]
-                    )
-                    send_central_update('service_notifications', MessageProtocol.parse_message(service_completed_msg))
-
-                    # Cambia el estado del taxi y manda a base
-                    taxi["status"] = "returning_to_base"
-                    taxi["current_destination_coords"] = CITY_MAP["A"] # Asume que la base es "A"
-                    taxi["service_id"] = None
-
-                    taxi_command_msg = MessageProtocol.create_taxi_command(
-                        taxi_id=taxi_id, command="RETURN_TO_BASE", new_destination_coords=CITY_MAP["A"]
-                    )
-                    send_central_update('taxi_commands', MessageProtocol.parse_message(taxi_command_msg))
-
-                # Si está volviendo a base y ha llegado
-                elif status == "returning_to_base" and taxi["current_destination_coords"] and \
-                     (x, y) == (taxi["current_destination_coords"]["x"], taxi["current_destination_coords"]["y"]):
-                    taxi["status"] = "disabled"   # Deshabilita el taxi al llegar a base
-                    taxi["service_id"] = None   # Limpia el ID de servicio
-                    taxi["current_destination_coords"] = None
+            elif base_taxi_id in TAXI_FLEET:
+                taxi = TAXI_FLEET[base_taxi_id]
+                TAXI_FLEET[taxi_id] = taxi
+                del TAXI_FLEET[base_taxi_id]
+                taxi_id = taxi_id
             else:
                 print(f"Advertencia: Movimiento de taxi no registrado: {taxi_id}")
+                continue
+
+            # Actualiza la posición y estado del taxi
+            taxi["x"] = x
+            taxi["y"] = y
+            taxi["status"] = status
+
+            # Emitir JSON actualizado en cada movimiento
+            map_state_message = MessageProtocol.create_map_update(
+                city_map=copy.deepcopy(CITY_MAP),
+                taxi_fleet=copy.deepcopy(TAXI_FLEET),
+                customer_requests=copy.deepcopy(CUSTOMER_REQUESTS)
+            )
+            send_central_update('map_updates', MessageProtocol.parse_message(map_state_message))
+
+            # Si está yendo a recoger al cliente y ha llegado
+            if status == "moving_to_customer" and taxi["service_id"]:
+                client_id = taxi["service_id"]
+                client_coords = CUSTOMER_REQUESTS[client_id]["origin_coords"]
+                if (x, y) == (client_coords["x"], client_coords["y"]):
+                    destination_id = CUSTOMER_REQUESTS[client_id]["destination_id"]
+                    final_destination_coords = CITY_MAP[destination_id]
+                    print(f"Taxi {taxi_id} ha recogido al cliente {client_id} en ({x},{y}). Enviando comando para ir al destino final {destination_id} ({final_destination_coords['x']},{final_destination_coords['y']})")
+                    taxi["status"] = "moving_to_destination"
+                    taxi["current_destination_coords"] = final_destination_coords
+                    CUSTOMER_REQUESTS[client_id]["status"] = "picked_up"
+                    new_taxi_id = f"{base_taxi_id}a"
+                    TAXI_FLEET[new_taxi_id] = TAXI_FLEET.pop(taxi_id)
+                    taxi_id = new_taxi_id
+                    if client_id in CUSTOMER_REQUESTS:
+                        del CUSTOMER_REQUESTS[client_id]
+                    taxi_command_msg = MessageProtocol.create_taxi_command(
+                        taxi_id=taxi_id, command="GOTO_DEST", new_destination_coords=final_destination_coords, client_id=client_id, final_destination_id=destination_id
+                    )
+                    send_central_update('taxi_commands', MessageProtocol.parse_message(taxi_command_msg))
+                    map_state_message = MessageProtocol.create_map_update(
+                        city_map=copy.deepcopy(CITY_MAP),
+                        taxi_fleet=copy.deepcopy(TAXI_FLEET),
+                        customer_requests=copy.deepcopy(CUSTOMER_REQUESTS)
+                    )
+                    send_central_update('map_updates', MessageProtocol.parse_message(map_state_message))
+
+            # Si está yendo al destino y ha llegado
+            elif status == "moving_to_destination" and taxi["current_destination_coords"] and \
+                 (x, y) == (taxi["current_destination_coords"]["x"], taxi["current_destination_coords"]["y"]):
+                client_id = taxi["service_id"]
+                service_completed_msg = MessageProtocol.create_service_completed(
+                    client_id=client_id, taxi_id=taxi_id, destination_id=taxi["current_destination_coords"]
+                )
+                send_central_update('service_notifications', MessageProtocol.parse_message(service_completed_msg))
+                taxi["status"] = "returning_to_base"
+                taxi["current_destination_coords"] = CITY_MAP["A"]
+                taxi["service_id"] = None
+                if isinstance(taxi_id, str) and taxi_id.endswith('a'):
+                    base_taxi_id = taxi_id[:-1]
+                    TAXI_FLEET[base_taxi_id] = TAXI_FLEET.pop(taxi_id)
+                    taxi_id = base_taxi_id
+                taxi_command_msg = MessageProtocol.create_taxi_command(
+                    taxi_id=taxi_id, command="RETURN_TO_BASE", new_destination_coords=CITY_MAP["A"]
+                )
+                send_central_update('taxi_commands', MessageProtocol.parse_message(taxi_command_msg))
+                map_state_message = MessageProtocol.create_map_update(
+                    city_map=copy.deepcopy(CITY_MAP),
+                    taxi_fleet=copy.deepcopy(TAXI_FLEET),
+                    customer_requests=copy.deepcopy(CUSTOMER_REQUESTS)
+                )
+                send_central_update('map_updates', MessageProtocol.parse_message(map_state_message))
+
+            # Si está volviendo a base y ha llegado
+            elif status == "returning_to_base" and taxi["current_destination_coords"] and \
+                 (x, y) == (taxi["current_destination_coords"]["x"], taxi["current_destination_coords"]["y"]):
+                taxi["status"] = "disabled"
+                taxi["service_id"] = None
+                taxi["current_destination_coords"] = None
+                map_state_message = MessageProtocol.create_map_update(
+                    city_map=copy.deepcopy(CITY_MAP),
+                    taxi_fleet=copy.deepcopy(TAXI_FLEET),
+                    customer_requests=copy.deepcopy(CUSTOMER_REQUESTS)
+                )
+                send_central_update('map_updates', MessageProtocol.parse_message(map_state_message))
 
 def process_sensor_data_messages():
     """Procesa los mensajes del tema 'sensor_data'."""
@@ -409,22 +466,25 @@ def assign_taxi_to_request(client_id, destination_id):
 
 def process_service_completed_messages():
     """Procesa los mensajes del tema 'service_notifications' cuando el taxi finaliza un servicio."""
+    global TAXI_FLEET, CUSTOMER_REQUESTS
     for message in central_service_notification_consumer:
         msg_value = message.value
         taxi_id = msg_value["data"]["taxi_id"]
 
         if msg_value.get("operation_code") == MessageProtocol.OP_SERVICE_COMPLETED:
-
             client_id = msg_value["data"]["client_id"]
             destination_id = msg_value["data"]["destination_id"]
 
             print(f"Servicio completado para cliente {client_id} por Taxi {taxi_id} en destino {destination_id}")
 
-            # Elimina al cliente del estado
+            # Elimina al cliente del estado (por si no se eliminó antes)
             if client_id in CUSTOMER_REQUESTS:
                 del CUSTOMER_REQUESTS[client_id]
             # El taxi debe volver a su posición inicial
-            # Guarda la posición inicial al cargar la flota
+            if isinstance(taxi_id, str) and taxi_id.endswith('a'):
+                base_taxi_id = taxi_id[:-1]
+                TAXI_FLEET[base_taxi_id] = TAXI_FLEET.pop(taxi_id)
+                taxi_id = base_taxi_id
             if "initial_x" in TAXI_FLEET[taxi_id] and "initial_y" in TAXI_FLEET[taxi_id]:
                 initial_coords = {"x": TAXI_FLEET[taxi_id]["initial_x"], "y": TAXI_FLEET[taxi_id]["initial_y"]}
                 print(f"{initial_coords}")
@@ -433,14 +493,56 @@ def process_service_completed_messages():
                 print(f"{initial_coords}")
             TAXI_FLEET[taxi_id]["status"] = "returning_to_base"
             TAXI_FLEET[taxi_id]["current_destination_coords"] = initial_coords
-
             print(f"Posicion actual del taxi {taxi_id}: ({TAXI_FLEET[taxi_id]['x']}, {TAXI_FLEET[taxi_id]['y']})")
-
             taxi_command_msg = MessageProtocol.create_taxi_command(
                 taxi_id=taxi_id, command="RETURN_TO_BASE", new_destination_coords=initial_coords
             )
             send_central_update('taxi_commands', MessageProtocol.parse_message(taxi_command_msg))
+            # Emitir JSON actualizado
+            map_state_message = MessageProtocol.create_map_update(
+                city_map=copy.deepcopy(CITY_MAP),
+                taxi_fleet=copy.deepcopy(TAXI_FLEET),
+                customer_requests=copy.deepcopy(CUSTOMER_REQUESTS)
+            )
+            send_central_update('map_updates', MessageProtocol.parse_message(map_state_message))
 
+def process_taxi_pickup_messages():
+    """Procesa los mensajes del topic 'taxi_pickups' para detectar recogidas y enviar el comando de ir al destino."""
+    for message in taxi_pickup_consumer:
+        msg_value = message.value
+        if msg_value.get("operation_code") == MessageProtocol.OP_TAXI_PICKUP:
+            taxi_id = msg_value["data"]["taxi_id"]
+            client_id = msg_value["data"]["client_id"]
+            pickup_coords = msg_value["data"]["pickup_coords"]
+            print(f"Central: Taxi {taxi_id} ha recogido al cliente {client_id} en {pickup_coords}. Enviando comando para ir al destino...")
+            # Buscar el destino final del cliente
+            if client_id in CUSTOMER_REQUESTS:
+                destination_id = CUSTOMER_REQUESTS[client_id]["destination_id"]
+                final_destination_coords = CITY_MAP[destination_id]
+                taxi_command_msg = MessageProtocol.create_taxi_command(
+                    taxi_id=taxi_id, command="GOTO_DEST", new_destination_coords=final_destination_coords, client_id=client_id, final_destination_id=destination_id
+                )
+                send_central_update('taxi_commands', MessageProtocol.parse_message(taxi_command_msg))
+
+def process_taxi_dropoff_messages():
+    """Procesa los mensajes del topic 'taxi_dropoffs' para detectar llegada al destino y enviar el comando de volver a base."""
+    for message in taxi_dropoff_consumer:
+        msg_value = message.value
+        if msg_value.get("operation_code") == MessageProtocol.OP_TAXI_DROPOFF:
+            taxi_id = msg_value["data"]["taxi_id"]
+            client_id = msg_value["data"]["client_id"]
+            destination_id = msg_value["data"]["destination_id"]
+            dropoff_coords = msg_value["data"]["dropoff_coords"]
+            print(f"Central: Taxi {taxi_id} ha dejado al cliente {client_id} en destino {destination_id} en {dropoff_coords}. Enviando comando para volver a base...")
+            # Buscar la base del taxi (puedes definir una lógica, aquí se asume base en taxis_available.txt)
+            if taxi_id in TAXI_FLEET:
+                base_x = TAXI_FLEET[taxi_id]["base_x"] if "base_x" in TAXI_FLEET[taxi_id] else TAXI_FLEET[taxi_id]["x"]
+                base_y = TAXI_FLEET[taxi_id]["base_y"] if "base_y" in TAXI_FLEET[taxi_id] else TAXI_FLEET[taxi_id]["y"]
+                base_coords = {"x": base_x, "y": base_y}
+                taxi_command_msg = MessageProtocol.create_taxi_command(
+                    taxi_id=taxi_id, command="RETURN_TO_BASE", new_destination_coords=base_coords, client_id=None, final_destination_id=None
+                )
+                send_central_update('taxi_commands', MessageProtocol.parse_message(taxi_command_msg))
 
 # --- Función para enviar el estado completo del mapa ---
 def send_map_updates_periodically():
@@ -531,13 +633,12 @@ def main():
     threading.Thread(target=process_sensor_data_messages, daemon=True).start()
     threading.Thread(target=process_customer_request_messages, daemon=True).start()
     threading.Thread(target=process_service_completed_messages, daemon=True).start()
-
+    threading.Thread(target=process_taxi_pickup_messages, daemon=True).start()
+    threading.Thread(target=process_taxi_dropoff_messages, daemon=True).start()
     # Hilo para enviar actualizaciones del mapa
     threading.Thread(target=send_map_updates_periodically, daemon=True).start()
-
     # Hilo para consultar el estado del tráfico
     threading.Thread(target=check_traffic_status_periodically, daemon=True).start()
-
     # Iniciar el API REST de auditoría en un hilo aparte
     threading.Thread(target=run_audit_api, daemon=True).start()
     start_auth_server()

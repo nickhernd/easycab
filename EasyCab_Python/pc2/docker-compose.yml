@@ -1,21 +1,33 @@
-version: '3.8'
 services:
   ctc:
-    build: ../Traffic
-    ports: 
+    build:
+      context: ..
+      dockerfile: ./Traffic/Dockerfile
+    ports:
       - "5001:5001"
     environment:
       - OPENWEATHER_API_KEY=f23280b7dd0ea5985e196bac7746037b
-      - KAFKA_BROKER=${KAFKA_IP}:29092
-    command: ["python3", "EC_CTC.py", "--kafka_broker", "${KAFKA_IP}:29092"]
+      - KAFKA_BROKER=${KAFKA_IP}:9094
+    command: ["python3", "/app/Traffic/EC_CTC.py", "--kafka_broker", "${KAFKA_IP}:9094"]
     volumes:
-      - ../common:/common
+      - ../common:/app/common
+    networks:
+      - easycab_shared_network
 
   customer:
-    build: ../Customer
+    build:
+      context: ..
+      dockerfile: ./Customer/Dockerfile
     environment:
-      - KAFKA_BROKER=${KAFKA_IP}:29092
+      - KAFKA_BROKER=${KAFKA_IP}:9094
       - TERM=xterm
-    command: ["python3", "EC_Customer.py", "--kafka_broker", "${KAFKA_IP}:29092", "--client_id", "a"]
+    command: ["python3", "/app/Customer/EC_Customer.py", "--kafka_broker", "${KAFKA_IP}:9094", "--client_id", "a"]
     volumes:
-      - ../common:/common
+      - ../common:/app/common
+    networks:
+      - easycab_shared_network
+
+networks:
+  easycab_shared_network:
+    name: easycab_shared_network
+    external: true

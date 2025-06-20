@@ -85,32 +85,36 @@ def load_customer_requests(file_path):
 
 def process_service_notifications():
     """Procesa las notificaciones de servicio de la Central."""
-    global service_status, current_assigned_taxi
-
-    for message in service_notification_consumer:
-        msg_value = message.value
-        if msg_value.get("operation_code") == MessageProtocol.OP_SERVICE_NOTIFICATION:
-            data = msg_value["data"]
-            if data.get("client_id") == CLIENT_ID:
-                status = data.get("status")
-                msg = data.get("message")
-                taxi_id = data.get("taxi_id")
-                
-                print(f"Cliente {CLIENT_ID}: Notificación de servicio - Status: {status}, Mensaje: {msg}")
-
-                if status == MessageProtocol.STATUS_OK:
-                    service_status = "accepted"
-                    current_assigned_taxi = taxi_id
-                elif status == MessageProtocol.STATUS_KO:
-                    service_status = "denied"
-                    current_assigned_taxi = None
-                
-        elif msg_value.get("operation_code") == MessageProtocol.OP_SERVICE_COMPLETED:
-            data = msg_value["data"]
-            if data.get("client_id") == CLIENT_ID:
-                print(f"Cliente {CLIENT_ID}: ¡Servicio completado por Taxi {data['taxi_id']} en {data['destination_id']}!")
-                service_status = "completed"
-                current_assigned_taxi = None 
+    global service_status, current_assigned_taxi, current_request_index
+    while True:
+        for message in service_notification_consumer:
+            msg_value = message.value
+            if msg_value.get("operation_code") == MessageProtocol.OP_SERVICE_NOTIFICATION:
+                data = msg_value["data"]
+                if data.get("client_id") == CLIENT_ID:
+                    status = data.get("status")
+                    msg = data.get("message")
+                    taxi_id = data.get("taxi_id")
+                    print(f"Cliente {CLIENT_ID}: Notificación de servicio - Status: {status}, Mensaje: {msg}")
+                    if status == MessageProtocol.STATUS_OK:
+                        service_status = "accepted"
+                        current_assigned_taxi = taxi_id
+                    elif status == MessageProtocol.STATUS_KO:
+                        service_status = "denied"
+                        current_assigned_taxi = None
+            elif msg_value.get("operation_code") == MessageProtocol.OP_SERVICE_COMPLETED:
+                data = msg_value["data"]
+                if data.get("client_id") == CLIENT_ID:
+                    # Solo marcar como completado si el destino coincide con la solicitud actual
+                    if 'destination_id' in data and 'requests' in globals() and current_request_index < len(requests):
+                        expected_dest = requests[current_request_index]["destination_id"]
+                        if data["destination_id"] == expected_dest:
+                            print(f"Cliente {CLIENT_ID}: ¡Servicio completado por Taxi {data['taxi_id']} en {data['destination_id']}!")
+                            service_status = "completed"
+                            current_assigned_taxi = None
+                    else:
+                        # Si no hay coincidencia, ignorar o loguear
+                        print(f"Cliente {CLIENT_ID}: Servicio completado recibido pero destino no coincide o no hay solicitudes activas.")
 
 def process_map_updates():
     """Escucha y procesa actualizaciones del mapa de la Central."""

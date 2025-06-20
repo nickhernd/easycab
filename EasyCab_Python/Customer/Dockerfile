@@ -1,9 +1,15 @@
-FROM python:3.9
+FROM python:3.9-slim-buster
 
-WORKDIR /Customer
-COPY . /Customer/
+WORKDIR /app/Customer
 
-COPY requirements.txt /Customer/
+COPY ./Customer/requirements.txt .
+
 RUN pip install --no-cache-dir -r requirements.txt
 
-CMD ["python3", "EC_Customer.py", "--kafka_broker", "kafka:29092", "--client_id", "a"]
+COPY ./common /app/common
+
+COPY ./Customer .
+
+ENV PYTHONPATH=/app:$PYTHONPATH
+
+CMD ["python3", "EC_Customer.py", "--kafka_broker", "localhost:9094", "--client_id", "a"]

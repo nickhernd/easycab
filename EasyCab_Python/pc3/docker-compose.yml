@@ -1,15 +1,36 @@
-version: '3.8'
 services:
   registry:
-    build: ../Regestry
-    ports: ["5002:5002"]
+    build:
+      context: ../
+      dockerfile: Regestry/Dockerfile
+    ports:
+      - "5002:5002"
     environment:
-      - KAFKA_BROKER=${KAFKA_IP}:29092
-    command: ["python3", "EC_Registry.py"]
+      - KAFKA_BROKER=${KAFKA_IP}:9094
+    command: ["python3", "/app/Regestry/EC_Registry.py"]
+    networks:
+      - easycab_shared_network
 
   taxi:
-    build: ../Taxi
+    build:
+      context: ../
+      dockerfile: Taxi/Dockerfile
     environment:
-      - KAFKA_BROKER=${KAFKA_IP}:29092
-    command: ["python3", "EC_DE.py", "--ip_port_ecc", "${KAFKA_IP}:65432", "--kafka_broker", "${KAFKA_IP}:29092", "--ip_port_ecs", "registry:5002", "--taxi_id", "1"]
-    depends_on: [registry]
+      - KAFKA_BROKER=${KAFKA_IP}:9094
+      - TERM=xterm
+    command:
+      ["python3", "/app/Taxi/EC_DE.py",
+       "--ip_ecc_host", "central",
+       "--ip_ecc_port", "65432",
+       "--kafka_broker", "${KAFKA_IP}:9094",
+       "--ip_port_ecs", "registry:5002",
+       "--taxi_id", "1"]
+    depends_on:
+      - registry
+    networks:
+      - easycab_shared_network
+
+networks:
+  easycab_shared_network:
+    name: easycab_shared_network
+    external: true

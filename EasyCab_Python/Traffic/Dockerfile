@@ -1,9 +1,15 @@
-FROM python:3.9
+FROM python:3.9-slim-buster
 
-WORKDIR /Traffic
-COPY . /Traffic/
+WORKDIR /app/Traffic
 
-COPY requirements.txt /Traffic/
+COPY ./Traffic/requirements.txt .
+
 RUN pip install --no-cache-dir -r requirements.txt
 
-CMD ["python3", "EC_CTC.py", "--kafka_broker", "kafka:29092"]
+COPY ./common /app/common
+
+COPY ./Traffic .
+
+ENV PYTHONPATH=/app:$PYTHONPATH
+
+CMD ["python3", "EC_CTC.py", "--kafka_broker", "localhost:9094"]

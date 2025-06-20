@@ -11,6 +11,8 @@ class MessageProtocol:
     OP_TAXI_COMMAND = "TAXI_CMD"
     OP_SERVICE_COMPLETED = "SERV_COMPL"
     OP_MAP_UPDATE = "MAP_UPD"
+    OP_TAXI_PICKUP = "TAXI_PICKUP"
+    OP_TAXI_DROPOFF = "TAXI_DROPOFF"
 
     # Status Codes
     STATUS_OK = "OK"
@@ -124,4 +126,18 @@ class MessageProtocol:
                 "taxi_fleet": simplified_taxi_fleet,
                 "customer_requests": active_customers_on_map
             }
+        )
+
+    @staticmethod
+    def create_taxi_pickup(taxi_id, client_id, pickup_coords):
+        return MessageProtocol.create_message(
+            MessageProtocol.OP_TAXI_PICKUP,
+            {"taxi_id": taxi_id, "client_id": client_id, "pickup_coords": pickup_coords}
+        )
+
+    @staticmethod
+    def create_taxi_dropoff(taxi_id, client_id, destination_id, dropoff_coords):
+        return MessageProtocol.create_message(
+            MessageProtocol.OP_TAXI_DROPOFF,
+            {"taxi_id": taxi_id, "client_id": client_id, "destination_id": destination_id, "dropoff_coords": dropoff_coords}
         )

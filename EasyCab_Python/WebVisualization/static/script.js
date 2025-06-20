@@ -83,9 +83,9 @@ function drawMap() {
         const taxiData = currentTaxiFleetState[taxiId];
         const tx = taxiData.x;
         const ty = taxiData.y;
-        let taxiStatusClass = 'taxi-free';
-        if (taxiData.status === 'moving_to_customer' || taxiData.status === 'moving_to_destination') {
-            taxiStatusClass = 'taxi-moving';
+        let taxiStatusClass = 'taxi-free'; // Default
+        if (taxiData.status === 'moving_to_customer' || taxiData.status === 'moving_to_destination' || taxiData.status === 'returning_to_base') {
+            taxiStatusClass = 'taxi-moving'; // Consider 'returning_to_base' as 'moving'
         } else if (taxiData.status === 'disabled' || taxiData.status === 'stopped') {
             taxiStatusClass = 'taxi-disabled';
         } else if (taxiData.status === 'picked_up' || taxiData.status === 'occupied') {
@@ -181,9 +181,10 @@ function formatTaxiStatus(status) {
         case 'moving_to_customer': return 'En camino a cliente';
         case 'moving_to_destination': return 'En camino a destino';
         case 'picked_up': return 'Cliente a bordo';
-        case 'occupied': return 'Ocupado';
+        case 'occupied': return 'Ocupado'; // Keep if your backend sends it, otherwise remove
         case 'disabled': return 'Deshabilitado';
-        case 'stopped': return 'Detenido';
+        case 'stopped': return 'Detenido'; // Keep if your backend sends it, otherwise remove
+        case 'returning_to_base': return 'Volviendo a base'; // NEW: Add this status
         default: return status;
     }
 }

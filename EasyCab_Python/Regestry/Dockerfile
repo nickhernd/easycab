@@ -1,9 +1,12 @@
-FROM python:3.9
+FROM python:3.9-slim-buster
 
-WORKDIR /Regestry
-COPY . /Regestry/
+WORKDIR /app/Regestry
 
-COPY requirements.txt /Regestry/
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-CMD ["python3", "registry.py"]
+COPY ./Regestry/cert.pem .
+COPY ./Regestry/key.pem .
+COPY ./Regestry .
+
+CMD ["python3", "EC_Registry.py"]
