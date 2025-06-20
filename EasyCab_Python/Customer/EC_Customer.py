@@ -87,98 +87,73 @@ def process_service_notifications():
     """Procesa las notificaciones de servicio de la Central."""
     global service_status, current_assigned_taxi, current_request_index
     while True:
-        for message in service_notification_consumer:
-            msg_value = message.value
-            if msg_value.get("operation_code") == MessageProtocol.OP_SERVICE_NOTIFICATION:
-                data = msg_value["data"]
-                if data.get("client_id") == CLIENT_ID:
-                    status = data.get("status")
-                    msg = data.get("message")
-                    taxi_id = data.get("taxi_id")
-                    print(f"Cliente {CLIENT_ID}: Notificación de servicio - Status: {status}, Mensaje: {msg}")
-                    if status == MessageProtocol.STATUS_OK:
-                        service_status = "accepted"
-                        current_assigned_taxi = taxi_id
-                    elif status == MessageProtocol.STATUS_KO:
-                        service_status = "denied"
-                        current_assigned_taxi = None
-            elif msg_value.get("operation_code") == MessageProtocol.OP_SERVICE_COMPLETED:
-                data = msg_value["data"]
-                if data.get("client_id") == CLIENT_ID:
-                    # Solo marcar como completado si el destino coincide con la solicitud actual
-                    if 'destination_id' in data and 'requests' in globals() and current_request_index < len(requests):
-                        expected_dest = requests[current_request_index]["destination_id"]
-                        if data["destination_id"] == expected_dest:
-                            print(f"Cliente {CLIENT_ID}: ¡Servicio completado por Taxi {data['taxi_id']} en {data['destination_id']}!")
-                            service_status = "completed"
+        try:
+            for message in service_notification_consumer:
+                print(f"[DEBUG] Cliente {CLIENT_ID}: Mensaje recibido en 'service_notifications': {message.value}")
+                msg_value = message.value
+                if msg_value.get("operation_code") == MessageProtocol.OP_SERVICE_NOTIFICATION:
+                    data = msg_value["data"]
+                    if data.get("client_id") == CLIENT_ID:
+                        status = data.get("status")
+                        msg = data.get("message")
+                        taxi_id = data.get("taxi_id")
+                        print(f"Cliente {CLIENT_ID}: Notificación de servicio - Status: {status}, Mensaje: {msg}, Taxi asignado: {taxi_id}")
+                        if status == MessageProtocol.STATUS_OK:
+                            print(f"[TRACE] Cliente {CLIENT_ID}: Servicio aceptado. Taxi asignado: {taxi_id}")
+                            service_status = "accepted"
+                            current_assigned_taxi = taxi_id
+                        elif status == MessageProtocol.STATUS_KO:
+                            print(f"[TRACE] Cliente {CLIENT_ID}: Servicio denegado por la central.")
+                            service_status = "denied"
                             current_assigned_taxi = None
-                    else:
-                        # Si no hay coincidencia, ignorar o loguear
-                        print(f"Cliente {CLIENT_ID}: Servicio completado recibido pero destino no coincide o no hay solicitudes activas.")
+                elif msg_value.get("operation_code") == MessageProtocol.OP_SERVICE_COMPLETED:
+                    data = msg_value["data"]
+                    if data.get("client_id") == CLIENT_ID:
+                        # Solo marcar como completado si el destino coincide con la solicitud actual
+                        if 'destination_id' in data and 'requests' in globals() and current_request_index < len(requests):
+                            expected_dest = requests[current_request_index]["destination_id"]
+                            if data["destination_id"] == expected_dest:
+                                print(f"Cliente {CLIENT_ID}: ¡Servicio completado por Taxi {data['taxi_id']} en {data['destination_id']}!")
+                                print(f"[TRACE] Cliente {CLIENT_ID}: Estado cambiado a 'completed'.")
+                                service_status = "completed"
+                                current_assigned_taxi = None
+                            else:
+                                print(f"[WARN] Cliente {CLIENT_ID}: Servicio completado recibido pero destino no coincide. Esperado: {expected_dest}, Recibido: {data['destination_id']}")
+                        else:
+                            print(f"[WARN] Cliente {CLIENT_ID}: Servicio completado recibido pero no hay solicitudes activas o falta información.")
+        except Exception as e:
+            print(f"[ERROR] Cliente {CLIENT_ID}: Excepción en process_service_notifications: {e}")
+            time.sleep(2)
 
 def process_map_updates():
-    """Escucha y procesa actualizaciones del mapa de la Central."""
+    """Procesa actualizaciones del mapa recibidas desde la Central (sin imprimir el mapa en consola)."""
     global current_city_map, current_taxi_fleet_state, current_customer_requests_state
-    for message in map_update_consumer:
-        msg_value = message.value
-        if msg_value.get("operation_code") == MessageProtocol.OP_MAP_UPDATE:
-            current_city_map = msg_value["data"]["city_map"]
-            current_taxi_fleet_state = msg_value["data"]["taxi_fleet"]
-            current_customer_requests_state = msg_value["data"]["customer_requests"]
-            draw_map() 
+    while True:
+        try:
+            for message in map_update_consumer:
+                print(f"[DEBUG] Cliente {CLIENT_ID}: Mensaje recibido en 'map_updates': {message.value}")
+                msg_value = message.value
+                if msg_value.get("operation_code") == MessageProtocol.OP_MAP_UPDATE:
+                    current_city_map = msg_value["data"]["city_map"]
+                    current_taxi_fleet_state = msg_value["data"]["taxi_fleet"]
+                    current_customer_requests_state = msg_value["data"]["customer_requests"]
+        except Exception as e:
+            print(f"[ERROR] Cliente {CLIENT_ID}: Excepción en process_map_updates: {e}")
+            time.sleep(2)
 
 def clear_console():
     if os.environ.get('TERM'):
         os.system('cls' if os.name == 'nt' else 'clear')
 
 def draw_map():
-    """Dibuja el mapa ASCII en la consola."""
-    clear_console()
-    print("-" * 30)
-    print(f"Cliente {CLIENT_ID} | Estado de Servicio: {service_status}")
-    if current_assigned_taxi:
-        print(f"  Taxi Asignado: {current_assigned_taxi}")
-    print("-" * 30)
-
-    max_x = max([loc['x'] for loc in current_city_map.values()] + [taxi['x'] for taxi in current_taxi_fleet_state.values()] + [cust['origin_coords']['x'] for cust in current_customer_requests_state.values()])
-    max_y = max([loc['y'] for loc in current_city_map.values()] + [taxi['y'] for taxi in current_taxi_fleet_state.values()] + [cust['origin_coords']['y'] for cust in current_customer_requests_state.values()])
-
-    grid_width = max_x + 1
-    grid_height = max_y + 1
-
-    grid = [[' . ' for _ in range(grid_width)] for _ in range(grid_height)]
-
-    # Colocar ubicaciones de la ciudad
-    for loc_id, coords in current_city_map.items():
-        if 0 <= coords['y'] < grid_height and 0 <= coords['x'] < grid_width:
-            grid[coords['y']][coords['x']] = f" {loc_id} "
-
-    # Colocar clientes (especialmente el cliente actual)
-    for client_id, req_data in current_customer_requests_state.items():
-        cx, cy = req_data['origin_coords']['x'], req_data['origin_coords']['y']
-        if 0 <= cy < grid_height and 0 <= cx < grid_width:
-            if client_id == CLIENT_ID:
-                grid[cy][cx] = f"({CLIENT_ID[0].lower()})" # El cliente actual
-            elif grid[cy][cx] == ' . ': # Otros clientes
-                grid[cy][cx] = f" {client_id[0].lower()} "
-
-    # Colocar taxis
-    for taxi_id, taxi_data in current_taxi_fleet_state.items():
-        tx, ty = taxi_data['x'], taxi_data['y']
-        if 0 <= ty < grid_height and 0 <= tx < grid_width:
-            grid[ty][tx] = f"[T{taxi_id}]"
-
-    # Imprimir el grid (invertir Y para que (0,0) sea abajo izquierda)
-    for row in reversed(grid):
-        print("".join(row))
-    print("-" * 30)
-
+    pass  # Eliminar impresión de mapa para depuración
 
 def main():
     global current_request_index, service_status
 
     print(f"Iniciando EasyCab Customer (EC_Customer) para ID: {CLIENT_ID}")
     
+    global requests
     requests = load_customer_requests(REQUESTS_FILE)
     if not requests:
         print(f"No hay solicitudes para el cliente {CLIENT_ID} en {REQUESTS_FILE}.")
@@ -194,23 +169,24 @@ def main():
         
         # Enviar solicitud solo si no hay un servicio en curso
         if service_status in ["idle", "denied", "completed"]:
-            print(f"Cliente {CLIENT_ID}: Enviando solicitud de servicio a destino '{destination_id}'...")
+            print(f"[TRACE] Cliente {CLIENT_ID}: Enviando solicitud de servicio a destino '{destination_id}'...")
             request_msg = MessageProtocol.create_customer_request(CLIENT_ID, destination_id)
             send_kafka_message('customer_requests', MessageProtocol.parse_message(request_msg))
             service_status = "pending" # Marcar como pendiente después de enviar
+            print(f"[TRACE] Cliente {CLIENT_ID}: Estado cambiado a 'pending' tras enviar solicitud.")
         
         # Esperar hasta que el servicio sea procesado (aceptado/denegado/completado)
         while service_status == "pending" or service_status == "accepted":
             time.sleep(1) 
-            print(f"Cliente {CLIENT_ID}: Esperando procesamiento de solicitud. Estado: {service_status}") # Depuración
+            print(f"[TRACE] Cliente {CLIENT_ID}: Esperando procesamiento de solicitud. Estado: {service_status}")
 
         if service_status == "completed":
-            print(f"Cliente {CLIENT_ID}: Servicio '{current_request_index + 1}' completado. Pasando a la siguiente solicitud (si existe).")
+            print(f"[TRACE] Cliente {CLIENT_ID}: Servicio '{current_request_index + 1}' completado. Pasando a la siguiente solicitud (si existe).")
             current_request_index += 1
             service_status = "idle" 
             time.sleep(4) 
         elif service_status == "denied":
-            print(f"Cliente {CLIENT_ID}: Servicio '{current_request_index + 1}' denegado. Intentando la siguiente solicitud (si existe).")
+            print(f"[TRACE] Cliente {CLIENT_ID}: Servicio '{current_request_index + 1}' denegado. Intentando la siguiente solicitud (si existe).")
             current_request_index += 1
             service_status = "idle"
             time.sleep(4) 

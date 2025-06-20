@@ -11,7 +11,7 @@ services:
     networks:
       - easycab_shared_network
 
-  taxi:
+  taxi1:
     build:
       context: ../
       dockerfile: Taxi/Dockerfile
@@ -25,6 +25,63 @@ services:
        "--kafka_broker", "${KAFKA_IP}:9094",
        "--ip_port_ecs", "registry:5002",
        "--taxi_id", "1"]
+    depends_on:
+      - registry
+    networks:
+      - easycab_shared_network
+
+  taxi2:
+    build:
+      context: ../
+      dockerfile: Taxi/Dockerfile
+    environment:
+      - KAFKA_BROKER=${KAFKA_IP}:9094
+      - TERM=xterm
+    command:
+      ["python3", "/app/Taxi/EC_DE.py",
+       "--ip_ecc_host", "central",
+       "--ip_ecc_port", "65432",
+       "--kafka_broker", "${KAFKA_IP}:9094",
+       "--ip_port_ecs", "registry:5002",
+       "--taxi_id", "2"]
+    depends_on:
+      - registry
+    networks:
+      - easycab_shared_network
+
+  taxi3:
+    build:
+      context: ../
+      dockerfile: Taxi/Dockerfile
+    environment:
+      - KAFKA_BROKER=${KAFKA_IP}:9094
+      - TERM=xterm
+    command:
+      ["python3", "/app/Taxi/EC_DE.py",
+       "--ip_ecc_host", "central",
+       "--ip_ecc_port", "65432",
+       "--kafka_broker", "${KAFKA_IP}:9094",
+       "--ip_port_ecs", "registry:5002",
+       "--taxi_id", "3"]
+    depends_on:
+      - registry
+    networks:
+      - easycab_shared_network
+
+  taxi4:
+    build:
+      context: ../
+      dockerfile: Taxi/Dockerfile
+    environment:
+      - KAFKA_BROKER=${KAFKA_IP}:9094
+      - TERM=xterm
+    command:
+      ["python3", "/app/Taxi/EC_DE.py",
+       "--ip_ecc_host", "central",
+       "--ip_ecc_port", "65432",
+       "--kafka_broker", "${KAFKA_IP}:9094",
+       "--ip_port_ecs", "registry:5002",
+       "--taxi_id", "4"]
     depends_on:
       - registry
     networks:

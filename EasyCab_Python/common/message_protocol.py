@@ -116,7 +116,8 @@ class MessageProtocol:
             simplified_taxi_fleet[taxi_id] = {
                 "x": taxi_data["x"],
                 "y": taxi_data["y"],
-                "status": taxi_data["status"]
+                "status": taxi_data["status"],
+                "service_id": taxi_data.get("service_id")  # Añade el cliente asignado si existe
             }
 
         return MessageProtocol.create_message(

@@ -71,7 +71,9 @@ function drawMap() {
             grid[coords.y][coords.x].push({ char: locId, type: 'location' });
         }
     }
+    console.log('[drawMap] Id del cliente con el taxi asignado:', currentCustomerRequestsState);
     for (const clientId in currentCustomerRequestsState) {
+        console.log('[drawMap] Procesando cliente:', clientId);
         const reqData = currentCustomerRequestsState[clientId];
         const cx = reqData.origin_coords.x;
         const cy = reqData.origin_coords.y;
@@ -84,15 +86,37 @@ function drawMap() {
         const tx = taxiData.x;
         const ty = taxiData.y;
         let taxiStatusClass = 'taxi-free'; // Default
-        if (taxiData.status === 'moving_to_customer' || taxiData.status === 'moving_to_destination' || taxiData.status === 'returning_to_base') {
-            taxiStatusClass = 'taxi-moving'; // Consider 'returning_to_base' as 'moving'
+        let displayTaxiId = taxiId;
+
+        // Buscar el cliente asignado a este taxi
+        let assignedClientId = null;
+        for (const clientId in currentCustomerRequestsState) {
+            const reqData = currentCustomerRequestsState[clientId];
+            if (reqData.assigned_taxi_id === taxiId) {
+                assignedClientId = clientId;
+                break;
+            }
+        }
+
+        console.log('[drawMap] Taxi estado:', {
+            id: taxiId,
+            status: taxiData.status,
+            assignedClientId
+        });
+
+        console.log('[drawMap] Service ID del taxi:', taxiData.service_id);
+        // Si el taxi está recogiendo cliente, mostrar como 1X (X = id del cliente)
+        if (taxiData.status === 'moving_to_destination' && taxiData.service_id !== null) {
+            displayTaxiId = taxiId + taxiData.service_id;
+            taxiStatusClass = 'taxi-picked-up';
+        } else if (taxiData.status === 'moving_to_customer' || taxiData.status === 'returning_to_base') {
+            taxiStatusClass = 'taxi-moving';
         } else if (taxiData.status === 'disabled' || taxiData.status === 'stopped') {
             taxiStatusClass = 'taxi-disabled';
-        } else if (taxiData.status === 'picked_up' || taxiData.status === 'occupied') {
-            taxiStatusClass = 'taxi-picked-up';
         }
+
         if (ty >= 0 && ty < MAP_SIZE && tx >= 0 && tx < MAP_SIZE) {
-            grid[ty][tx].push({ char: `T${taxiId}`, type: taxiStatusClass });
+            grid[ty][tx].push({ char: `T${displayTaxiId}`, type: taxiStatusClass });
         } else {
             console.warn(`[drawMap] Taxi T${taxiId} tiene coordenadas fuera de rango: (${tx}, ${ty})`);
         }
@@ -154,12 +178,17 @@ function updateTaxiStatusTable() {
         const row = document.createElement('tr');
 
         let assignedClient = 'N/A';
+        // Primero busca en customer_requests
         for (const clientId in currentCustomerRequestsState) {
             const reqData = currentCustomerRequestsState[clientId];
             if (reqData.assigned_taxi_id === taxiId) {
                 assignedClient = clientId;
                 break;
             }
+        }
+        // Si no lo encuentra, usa el campo service_id del taxi
+        if (assignedClient === 'N/A' && taxiData.service_id) {
+            assignedClient = taxiData.service_id;
         }
 
         const statusClass = `status-${taxiData.status.replace(/ /g, '_')}`;

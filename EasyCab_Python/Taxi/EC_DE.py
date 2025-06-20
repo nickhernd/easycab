@@ -42,6 +42,8 @@ assigned_service_id = None
 target_x = None
 target_y = None
 final_destination_id = None
+_just_returned_to_base = False 
+
 
 # --- Estados para visualización del mapa ---
 current_city_map = {}
@@ -53,6 +55,8 @@ taxi_producer = KafkaProducer(
     bootstrap_servers=[KAFKA_BROKER],
     value_serializer=lambda v: json.dumps(v).encode('utf-8')
 )
+
+
 
 taxi_command_consumer = KafkaConsumer(
     'taxi_commands',
@@ -144,59 +148,74 @@ def calculate_next_step(current_x, current_y, target_x, target_y):
     return shortest_path_step(current_x, current_y, target_x, target_y)
 
 def simulate_movement():
-    """Simula el movimiento del taxi según su estado y destino."""
-    global current_x, current_y, status, target_x, target_y, assigned_service_id, final_destination_id
+    """Simula el movimiento del taxi según su estado y destino, mostrando logs de depuración."""
+    global current_x, current_y, status, target_x, target_y, assigned_service_id, final_destination_id, _just_returned_to_base
 
-    if status in ["disconnected", "disabled", "stopped"]:
+    # Log siempre el estado actual del taxi
+    print(f"[TAXI LOG] Estado: {status} | Posición actual: ({current_x},{current_y}) | Destino: ({target_x},{target_y}) | Cliente asignado: {assigned_service_id} | Destino final: {final_destination_id}")
+
+    # FIX: Si el taxi está en waiting_goto_dest pero ya tiene destino, cambiar a moving_to_destination
+    if status == "waiting_goto_dest" and target_x is not None and target_y is not None:
+        print(f"[TAXI FIX] Taxi {TAXI_ID}: Cambiando de waiting_goto_dest a moving_to_destination para ir a ({target_x},{target_y})")
+        status = "moving_to_destination"
+
+    # FIX: Si el taxi está en waiting_return_to_base pero ya tiene destino (base), cambiar a returning_to_base
+    if status == "waiting_return_to_base" and target_x is not None and target_y is not None:
+        print(f"[TAXI FIX] Taxi {TAXI_ID}: Cambiando de waiting_return_to_base a returning_to_base para ir a base en ({target_x},{target_y})")
+        status = "returning_to_base"
+
+    # If the taxi is waiting for unhandled command, don't move
+    if status in ["disconnected", "disabled", "stopped", "waiting_goto_dest", "waiting_return_to_base"]:
         return
 
     if target_x is not None and target_y is not None:
-        # Log para depuración
-        print(f"[DEBUG] Taxi {TAXI_ID} | Estado: {status} | Pos: ({current_x},{current_y}) | Destino: ({target_x},{target_y})")
         if (current_x, current_y) == (target_x, target_y):
             if status == "moving_to_customer":
-                print(f"Taxi {TAXI_ID}: Cliente {assigned_service_id} recogido en ({current_x},{current_y}). Avisando a la Central...")
-                # Enviar mensaje explícito de recogida a la Central
+                print(f"Taxi {TAXI_ID}: Cliente {assigned_service_id} recogido en ({current_x},{current_y}). Avisando a la Central y esperando siguiente comando...")
                 pickup_msg = MessageProtocol.create_taxi_pickup(
                     taxi_id=TAXI_ID, client_id=assigned_service_id, pickup_coords={"x": current_x, "y": current_y}
                 )
                 send_kafka_message('taxi_pickups', MessageProtocol.parse_message(pickup_msg))
                 send_current_position()
-                status = "waiting_goto_dest"  # Espera explícita del comando de la Central
-                # Espera a que la Central envíe el comando GOTO_DEST
+                status = "waiting_goto_dest"
+                _just_returned_to_base = False
             elif status == "moving_to_destination":
-                print(f"Taxi {TAXI_ID}: Cliente {assigned_service_id} dejado en destino final {final_destination_id} ({current_x},{current_y}). Avisando a la Central...")
-                # Enviar mensaje explícito de dropoff a la Central
+                print(f"Taxi {TAXI_ID}: Cliente {assigned_service_id} dejado en destino final {final_destination_id} ({current_x},{current_y}). Avisando a la Central y esperando siguiente comando...")
                 dropoff_msg = MessageProtocol.create_taxi_dropoff(
                     taxi_id=TAXI_ID, client_id=assigned_service_id, destination_id=final_destination_id, dropoff_coords={"x": current_x, "y": current_y}
                 )
                 send_kafka_message('taxi_dropoffs', MessageProtocol.parse_message(dropoff_msg))
                 send_current_position()
-                # Espera a que la Central envíe el comando RETURN_TO_BASE
+                status = "waiting_return_to_base"
+                _just_returned_to_base = False
             elif status == "returning_to_base":
                 print(f"Taxi {TAXI_ID}: He vuelto a la base ({current_x},{current_y}). Quedo libre.")
                 status = "free"
+                # Recuperar la posición inicial del taxi desde taxis_available.txt
+                try:
+                    with open('Central/taxis_available.txt', 'r') as f:
+                        for line in f:
+                            parts = line.strip().split()
+                            if len(parts) == 4 and int(parts[0]) == TAXI_ID:
+                                initial_x = int(parts[1])
+                                initial_y = int(parts[2])
+                                current_x = initial_x
+                                current_y = initial_y
+                                print(f"Taxi {TAXI_ID}: Posición reseteada a base ({current_x},{current_y}) tras finalizar servicio.")
+                                break
+                except Exception as e:
+                    print(f"Taxi {TAXI_ID}: Error al recuperar posición inicial de base: {e}")
                 target_x = None
                 target_y = None
+                assigned_service_id = None
+                final_destination_id = None
                 send_current_position()
+                _just_returned_to_base = True
             else:
-                if status == "waiting_goto_dest":
-                    return
                 print(f"Taxi {TAXI_ID}: Estado inesperado al llegar a destino: {status}")
         else:
-            # Log para depuración
-            print(f"[DEBUG] Taxi {TAXI_ID} avanzando de ({current_x},{current_y}) a siguiente paso hacia ({target_x},{target_y})")
+            print(f"[TAXI LOG] Avanzando de ({current_x},{current_y}) hacia ({target_x},{target_y})")
             new_x, new_y = calculate_next_step(current_x, current_y, target_x, target_y)
-            if (new_x, new_y) != (current_x, current_y):
-                current_x = new_x
-                current_y = new_y
-                send_current_position()
-    elif status == "free":
-        # Movimiento aleatorio cuando está libre
-        if random.random() < 0.3:
-            delta_x = random.choice([-1, 0, 1])
-            delta_y = random.choice([-1, 0, 1])
-            new_x, new_y = wrap_position(current_x + delta_x, current_y + delta_y)
             if (new_x, new_y) != (current_x, current_y):
                 current_x = new_x
                 current_y = new_y
@@ -222,56 +241,74 @@ def simulate_sensor_data():
 
 def process_taxi_commands():
     """Procesa comandos recibidos desde la Central para este taxi."""
-    global status, target_x, target_y, assigned_service_id, final_destination_id
+    global status, target_x, target_y, assigned_service_id, final_destination_id, _just_returned_to_base
 
     for message in taxi_command_consumer:
         msg_value = message.value
         if msg_value.get("operation_code") == MessageProtocol.OP_TAXI_COMMAND:
             command_data = msg_value["data"]
-            # Permite que el taxi acepte comandos tanto para su ID numérico como para su ID string (ej: '1a')
-            if str(command_data.get("taxi_id")) == str(TAXI_ID) or str(command_data.get("taxi_id")) == str(TAXI_ID) + "a":
+            # Permite aceptar comandos para el ID numérico y el string (ej: '1a')
+            taxi_id_msg = str(command_data.get("taxi_id"))
+            taxi_id_variants = [str(TAXI_ID), str(TAXI_ID) + "a", str(TAXI_ID).zfill(2), str(TAXI_ID).zfill(2) + "a"]
+            if taxi_id_msg in taxi_id_variants:
                 command = command_data.get("command")
                 new_destination_coords = command_data.get("new_destination_coords")
                 client_id_for_service = command_data.get("client_id")
                 final_dest_id_for_service = command_data.get("final_destination_id")
 
-                print(f"Taxi {TAXI_ID}: Recibido comando '{command}'. Datos: {command_data}")
+                print(f"[TAXI DEBUG] Taxi {TAXI_ID}: Recibido comando '{command}'. Datos: {command_data}")
 
-                if command == "PICKUP" and new_destination_coords:
-                    target_x, target_y = new_destination_coords["x"], new_destination_coords["y"]
-                    status = "moving_to_customer"
-                    assigned_service_id = client_id_for_service
-                    final_destination_id = final_dest_id_for_service
-                    print(f"Taxi {TAXI_ID}: Dirigiéndose a recoger al cliente {assigned_service_id} en ({target_x},{target_y}).")
-                    send_current_position()
-                elif command == "GOTO_DEST" and new_destination_coords:
-                    target_x, target_y = new_destination_coords["x"], new_destination_coords["y"]
-                    status = "moving_to_destination"
-                    assigned_service_id = client_id_for_service
-                    final_destination_id = final_dest_id_for_service
-                    print(f"Taxi {TAXI_ID}: Dirigiéndose al destino final {final_destination_id} en ({target_x},{target_y}).")
-                    send_current_position()
+                if command == "GOTO_DEST":
+                    print(f"[TAXI DEBUG] Taxi {TAXI_ID}: new_destination_coords recibido en GOTO_DEST: {new_destination_coords}")
+                    if new_destination_coords and "x" in new_destination_coords and "y" in new_destination_coords:
+                        target_x, target_y = new_destination_coords["x"], new_destination_coords["y"]
+                        status = "moving_to_destination"
+                        assigned_service_id = client_id_for_service
+                        final_destination_id = final_dest_id_for_service
+                        print(f"[TAXI DEBUG] Taxi {TAXI_ID}: Dirigiéndose al destino final {final_destination_id} en ({target_x},{target_y}).")
+                        send_current_position()
+                        _just_returned_to_base = False
+                    else:
+                        print(f"[TAXI ERROR] Taxi {TAXI_ID}: GOTO_DEST comando recibido sin coordenadas válidas: {new_destination_coords}")
+
+                elif command == "PICKUP":
+                    if new_destination_coords and "x" in new_destination_coords and "y" in new_destination_coords:
+                        target_x, target_y = new_destination_coords["x"], new_destination_coords["y"]
+                        status = "moving_to_customer"
+                        assigned_service_id = client_id_for_service
+                        final_destination_id = final_dest_id_for_service
+                        print(f"[TAXI DEBUG] Taxi {TAXI_ID}: Dirigiéndose a recoger al cliente {assigned_service_id} en ({target_x},{target_y}).")
+                        send_current_position()
+                    else:
+                        print(f"[TAXI ERROR] Taxi {TAXI_ID}: PICKUP comando recibido sin coordenadas válidas: {new_destination_coords}")
+
                 elif command == "STOP":
                     status = "stopped"
                     target_x = None
                     target_y = None
-                    print(f"Taxi {TAXI_ID}: Detenido por comando central.")
+                    print(f"[TAXI DEBUG] Taxi {TAXI_ID}: Detenido por comando central.")
                     send_current_position()
+
                 elif command == "RESUME":
                     if status == "stopped":
                         status = "free"
-                        print(f"Taxi {TAXI_ID}: Reanudando operaciones.")
+                        print(f"[TAXI DEBUG] Taxi {TAXI_ID}: Reanudando operaciones.")
                         send_current_position()
-                elif command == "RETURN_TO_BASE" and new_destination_coords:
-                    target_x, target_y = new_destination_coords["x"], new_destination_coords["y"]
-                    status = "returning_to_base"
-                    assigned_service_id = None
-                    final_destination_id = None
-                    print(f"Taxi {TAXI_ID}: Regresando a base en ({target_x},{target_y}).")
-                    send_current_position()
+
+                elif command == "RETURN_TO_BASE":
+                    if new_destination_coords and "x" in new_destination_coords and "y" in new_destination_coords:
+                        target_x, target_y = new_destination_coords["x"], new_destination_coords["y"]
+                        status = "returning_to_base"
+                        assigned_service_id = None
+                        final_destination_id = None
+                        print(f"[TAXI DEBUG] Taxi {TAXI_ID}: Regresando a base en ({target_x},{target_y}).")
+                        send_current_position()
+                        _just_returned_to_base = False
+                    else:
+                        print(f"[TAXI ERROR] Taxi {TAXI_ID}: RETURN_TO_BASE comando recibido sin coordenadas válidas: {new_destination_coords}")
 
 def process_map_updates():
-    """Procesa actualizaciones del mapa recibidas desde la Central y dibuja el mapa."""
+    """Procesa actualizaciones del mapa recibidas desde la Central (sin imprimir el mapa en consola)."""
     global current_city_map, current_taxi_fleet_state, current_customer_requests_state
     for message in map_update_consumer:
         msg_value = message.value
@@ -279,42 +316,13 @@ def process_map_updates():
             current_city_map = msg_value["data"]["city_map"]
             current_taxi_fleet_state = msg_value["data"]["taxi_fleet"]
             current_customer_requests_state = msg_value["data"]["customer_requests"]
-            draw_map()
+    # No llamar a draw_map ni imprimir nada
 
 def clear_console():
     os.system('cls' if os.name == 'nt' else 'clear')
 
 def draw_map():
-    """Dibuja el mapa 20x20 con taxis, clientes y localizaciones."""
-    clear_console()
-    print("-" * 40)
-    print(f"Taxi {TAXI_ID} | Estado: {status} | Pos: ({current_x},{current_y})")
-    print("-" * 40)
-
-    grid = [["   " for _ in range(MAP_SIZE)] for _ in range(MAP_SIZE)]
-
-    # Localizaciones (mayúsculas, fondo azul)
-    for loc_id, coords in current_city_map.items():
-        x, y = wrap_position(coords['x'], coords['y'])
-        grid[y-1][x-1] = f"\033[44m {loc_id} \033[0m"
-
-    # Clientes (minúsculas, fondo amarillo)
-    for client_id, req_data in current_customer_requests_state.items():
-        cx, cy = wrap_position(req_data['origin_coords']['x'], req_data['origin_coords']['y'])
-        grid[cy-1][cx-1] = f"\033[43m {client_id[0].lower()} \033[0m"
-
-    # Taxis (número, verde si moviéndose, rojo si parado)
-    for taxi_id, taxi_data in current_taxi_fleet_state.items():
-        tx, ty = wrap_position(taxi_data['x'], taxi_data['y'])
-        if taxi_data["status"] in ["moving_to_customer", "moving_to_destination", "returning_to_base"]:
-            color = "\033[42m"
-        else:
-            color = "\033[41m"
-        grid[ty-1][tx-1] = f"{color}{str(taxi_id).rjust(3)}\033[0m"
-
-    for row in reversed(grid):
-        print("".join(row))
-    print("-" * 40)
+    pass  # Eliminar impresión de mapa para depuración
 
 def register_taxi_in_registry():
     """Registra el taxi en el Registry externo usando http.client."""
@@ -353,33 +361,21 @@ def register_taxi_in_registry():
         print(f"Taxi {TAXI_ID}: Error al conectar con Registry: {e}")
         return False
 
+# Mandar a central el taxi disponible taxi id + x+ +y + status taxi_available
+def send_new_taxi_data_to_central():
+    """Envía los datos del taxi disponible a la Central."""
+    global current_x, current_y, status, TAXI_ID
+    taxi_fleet = {"TAXI_ID": TAXI_ID, "x": current_x, "y": current_y, "status": status}
+    send_kafka_message('taxis_available', taxi_fleet)
+    print(f"Taxi {TAXI_ID}: Datos enviados a Central: {taxi_fleet}")
+
 def main():
     """Punto de entrada principal: inicializa el taxi, registra, autentica y lanza los hilos de operación."""
     global current_x, current_y, status
 
-    print(f"Iniciando Taxi Digital Engine (EC_DE) con ID: {TAXI_ID}")
+    send_new_taxi_data_to_central()  # Enviar taxi disponible al iniciar
 
-    # Cargar la posición inicial del taxi desde archivo
-    try:
-        with open('Central/taxis_available.txt', 'r') as f:
-            for line in f:
-                parts = line.strip().split()
-                if len(parts) == 4:
-                    taxi_id_file = int(parts[0])
-                    if taxi_id_file == TAXI_ID:
-                        current_x = int(parts[1])
-                        current_y = int(parts[2])
-                        status = "disconnected"
-                        print(f"Taxi {TAXI_ID}: Posición inicial cargada ({current_x},{current_y}).")
-                        break
-            else:
-                print(f"Advertencia: Taxi {TAXI_ID} no encontrado en taxis_available.txt. Usando 0,0 como posición inicial.")
-                current_x = 0
-                current_y = 0
-    except FileNotFoundError:
-        print("Error: taxis_available.txt no encontrado. Usando 0,0 como posición inicial.")
-        current_x = 0
-        current_y = 0
+    print(f"Iniciando Taxi Digital Engine (EC_DE) con ID: {TAXI_ID}")
 
     if not register_taxi_in_registry():
         print(f"Taxi {TAXI_ID}: No se pudo registrar en Registry. Saliendo...")
@@ -392,6 +388,7 @@ def main():
     # Lanzar hilos para comandos y actualizaciones de mapa
     threading.Thread(target=process_taxi_commands, daemon=True).start()
     threading.Thread(target=process_map_updates, daemon=True).start()
+
 
     while True:
         simulate_movement()

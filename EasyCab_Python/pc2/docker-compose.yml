@@ -14,7 +14,7 @@ services:
     networks:
       - easycab_shared_network
 
-  customer:
+  customera:
     build:
       context: ..
       dockerfile: ./Customer/Dockerfile
@@ -22,6 +22,32 @@ services:
       - KAFKA_BROKER=${KAFKA_IP}:9094
       - TERM=xterm
     command: ["python3", "/app/Customer/EC_Customer.py", "--kafka_broker", "${KAFKA_IP}:9094", "--client_id", "a"]
+    volumes:
+      - ../common:/app/common
+    networks:
+      - easycab_shared_network
+
+  customerb:
+    build:
+      context: ..
+      dockerfile: ./Customer/Dockerfile
+    environment:
+      - KAFKA_BROKER=${KAFKA_IP}:9094
+      - TERM=xterm
+    command: ["python3", "/app/Customer/EC_Customer.py", "--kafka_broker", "${KAFKA_IP}:9094", "--client_id", "b"]
+    volumes:
+      - ../common:/app/common
+    networks:
+      - easycab_shared_network
+
+  customerc:
+    build:
+      context: ..
+      dockerfile: ./Customer/Dockerfile
+    environment:
+      - KAFKA_BROKER=${KAFKA_IP}:9094
+      - TERM=xterm
+    command: ["python3", "/app/Customer/EC_Customer.py", "--kafka_broker", "${KAFKA_IP}:9094", "--client_id", "c"]
     volumes:
       - ../common:/app/common
     networks:
