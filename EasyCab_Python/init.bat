@@ -4,12 +4,21 @@ start "" "C:\Program Files\Docker\Docker\Docker Desktop.exe"
 timeout /t 30 /nobreak  
 cd pc1
 docker compose up --build -d
+
+:check_pc1_status
+echo Comprobando el estado de los servicios de pc1...
+docker compose ps --services --filter "status=running" | findstr /i "pc1_service_name_here" >nul
 if %errorlevel% neq 0 (
-    echo Error al iniciar pc1. Verifique el archivo docker-compose.yml.
-    exit /b %errorlevel%
+    echo Algunos servicios de pc1 no están levantados. Reintentando...
+    docker compose up --build -d
+    timeout /t 10 /nobreak
+    goto check_pc1_status
+) else (
+    echo Todos los servicios de pc1 están levantados.
 )
+
 timeout /t 30 /nobreak
-start http://172.22.161.64:8080
+start http://172.22.161localhost.64:8080
 cd ..\pc3
 docker compose up taxi1 --build -d
 docker compose up taxi2 --build -d
