@@ -42,7 +42,7 @@ services:
     command:
       - /bin/sh
       - -c
-      - "sleep 30 && python3 /app/Central/database.py && python3 /app/Central/EC_Central.py --listen_port 65432 --ip_port_broker kafka:29092" # <-- MODIFICACIÓN AQUI
+      - "sleep 30 && python3 /app/Central/database.py && python3 /app/Central/EC_Central.py --listen_port 65432 --ip_port_broker kafka:29092" 
     depends_on:
       - kafka
     networks:
