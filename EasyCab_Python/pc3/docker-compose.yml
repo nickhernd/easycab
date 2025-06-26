@@ -11,77 +11,22 @@ services:
     networks:
       - easycab_shared_network
 
-  taxi1:
+  taxi: # Single service definition for all taxis
     build:
       context: ../
       dockerfile: Taxi/Dockerfile
     environment:
       - KAFKA_BROKER=${KAFKA_IP}:9094
       - TERM=xterm
+      # The HOSTNAME environment variable will be set by Docker to the container's ID/name,
+      # which can be used by your Python script to derive a unique ID for each taxi instance.
     command:
       ["python3", "/app/Taxi/EC_DE.py",
-       "--ip_ecc_host", "central",
-       "--ip_ecc_port", "65432",
-       "--kafka_broker", "${KAFKA_IP}:9094",
-       "--ip_port_ecs", "registry:5002",
-       "--taxi_id", "1"]
-    depends_on:
-      - registry
-    networks:
-      - easycab_shared_network
-
-  taxi2:
-    build:
-      context: ../
-      dockerfile: Taxi/Dockerfile
-    environment:
-      - KAFKA_BROKER=${KAFKA_IP}:9094
-      - TERM=xterm
-    command:
-      ["python3", "/app/Taxi/EC_DE.py",
-       "--ip_ecc_host", "central",
-       "--ip_ecc_port", "65432",
-       "--kafka_broker", "${KAFKA_IP}:9094",
-       "--ip_port_ecs", "registry:5002",
-       "--taxi_id", "2"]
-    depends_on:
-      - registry
-    networks:
-      - easycab_shared_network
-
-  taxi3:
-    build:
-      context: ../
-      dockerfile: Taxi/Dockerfile
-    environment:
-      - KAFKA_BROKER=${KAFKA_IP}:9094
-      - TERM=xterm
-    command:
-      ["python3", "/app/Taxi/EC_DE.py",
-       "--ip_ecc_host", "central",
-       "--ip_ecc_port", "65432",
-       "--kafka_broker", "${KAFKA_IP}:9094",
-       "--ip_port_ecs", "registry:5002",
-       "--taxi_id", "3"]
-    depends_on:
-      - registry
-    networks:
-      - easycab_shared_network
-
-  taxi4:
-    build:
-      context: ../
-      dockerfile: Taxi/Dockerfile
-    environment:
-      - KAFKA_BROKER=${KAFKA_IP}:9094
-      - TERM=xterm
-    command:
-      ["python3", "/app/Taxi/EC_DE.py",
-       "--ip_ecc_host", "central",
-       "--ip_ecc_port", "65432",
-       "--kafka_broker", "${KAFKA_IP}:9094",
-       "--ip_port_ecs", "registry:5002",
-       "--taxi_id", "4"]
+        "--ip_ecc_host", "central",
+        "--ip_ecc_port", "65432",
+        "--kafka_broker", "${KAFKA_IP}:9094",
+        "--ip_port_ecs", "registry:5002"]
+      # Removed --taxi_id here. Your EC_DE.py script should now determine its own ID dynamically.
     depends_on:
       - registry
     networks:

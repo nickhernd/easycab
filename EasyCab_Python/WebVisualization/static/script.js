@@ -1,5 +1,6 @@
 console.log('EasyCab script.js cargado');
 
+// Usa window.location.hostname para ser adaptable en entornos distribuidos
 const websocketUrl = 'ws://' + window.location.hostname + ':8765';
 const mapContainer = document.getElementById('map-container');
 const taxiStatusTableBody = document.querySelector('#taxi-status-table tbody');
@@ -9,7 +10,8 @@ let currentTaxiFleetState = {};
 let currentCustomerRequestsState = {};
 
 function connectWebSocket() {
-    const wsUrl = `ws://localhost:8765/`;
+    // Usa la variable websocketUrl definida globalmente
+    const wsUrl = websocketUrl; 
     const statusDiv = document.getElementById('ws-status');
     if (statusDiv) statusDiv.textContent = `Conectando a ${wsUrl}`;
     console.log('[WS] Intentando conectar a', wsUrl);
