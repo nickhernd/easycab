@@ -18,7 +18,6 @@ RUN mkdir -p /app/Central
 COPY Central/EC_Central.py /app/Central/EC_Central.py
 COPY Central/audit_api.py /app/Central/audit_api.py
 COPY Central/database.py /app/Central/database.py
-COPY Central/config_map.txt /app/Central/config_map.txt
 
 # Copia el módulo common que es una dependencia, en la raíz de /app
 COPY common /app/common

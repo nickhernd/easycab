@@ -16,6 +16,7 @@ from datetime import datetime
 import secrets
 import sqlite3
 import random
+import copy
 
 script_dir = os.path.dirname(__file__)
 project_root = os.path.abspath(os.path.join(script_dir, '..'))
@@ -158,12 +159,30 @@ def load_city_map():
 def load_taxi_fleet_from_db():
     """Carga la flota de taxis desde la base de datos."""
     global TAXI_FLEET
-    TAXI_FLEET = {} # Limpiar la flota existente en memoria
+    TAXI_FLEET = {}
     try:
         conn = get_db_connection()
+        print("Conectando a la base de datos para cargar la flota de taxis...")
         cursor = conn.cursor()
-        cursor.execute("SELECT taxi_id, x, y, status, service_id, current_destination_x, current_destination_y, initial_x, initial_y FROM taxis")
+        print("Ejecutando consulta para obtener taxis...")
+        # Asegurarse de que la tabla taxis existe
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS taxis (
+                taxi_id TEXT PRIMARY KEY,
+                x INTEGER NOT NULL,
+                y INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                service_id TEXT,
+                current_destination_x INTEGER,
+                current_destination_y INTEGER,
+                initial_x INTEGER,
+                initial_y INTEGER
+            )
+        ''')
+        cursor.execute("""SELECT taxi_id, x, y, status, service_id, current_destination_x, current_destination_y, initial_x, initial_y FROM taxis""")
+        print("Consulta ejecutada, procesando resultados...")
         taxis = cursor.fetchall()
+        print(f"Consulta ejecutada. Taxis encontrados: {len(taxis)}")
         for taxi_row in taxis:
             taxi_id = taxi_row["taxi_id"]
             TAXI_FLEET[taxi_id] = {
@@ -220,6 +239,18 @@ def load_customer_requests_from_db():
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
+        # Asegurarse de que la tabla customers existe
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS customers (
+                client_id TEXT PRIMARY KEY,
+                destination_id TEXT,
+                assigned_taxi_id TEXT,
+                status TEXT NOT NULL,
+                origin_x INTEGER NOT NULL,
+                origin_y INTEGER NOT NULL
+            )
+        ''')
+        print("Conectando a la base de datos para cargar solicitudes de clientes...")
         cursor.execute("SELECT client_id, destination_id, assigned_taxi_id, status, origin_x, origin_y FROM customers")
         customers = cursor.fetchall()
         for customer_row in customers:
@@ -335,77 +366,85 @@ def send_central_update(topic, message):
 
 def process_taxi_movement_messages():
     """Procesa los mensajes del tema 'taxi_movements'."""
-    global TAXI_FLEET, CUSTOMER_REQUESTS
     for message in taxi_position_consumer:
         msg_value = message.value
         if msg_value.get("operation_code") == MessageProtocol.OP_TAXI_POSITION:
-            taxi_id = str(msg_value["data"]["taxi_id"]) # Asegurar que sea string para las claves del diccionario y DB
+            taxi_id = msg_value["data"]["taxi_id"]
             x = msg_value["data"]["x"]
             y = msg_value["data"]["y"]
             status = msg_value["data"]["status"]
 
-            # Actualizar en memoria y en la base de datos
-            if taxi_id in TAXI_FLEET:
-                TAXI_FLEET[taxi_id]["x"] = x
-                TAXI_FLEET[taxi_id]["y"] = y
-                TAXI_FLEET[taxi_id]["status"] = status
-                # Asegurar que los datos de service_id y destino se mantengan o se actualicen
-                update_taxi_in_db(
-                    taxi_id, x, y, status,
-                    TAXI_FLEET[taxi_id].get("service_id"),
-                    TAXI_FLEET[taxi_id].get("current_destination_coords"),
-                    TAXI_FLEET[taxi_id]["initial_x"],
-                    TAXI_FLEET[taxi_id]["initial_y"]
-                )
-            else:
-                print(f"Advertencia: Movimiento de taxi {taxi_id} no gestionado o no registrado. Se registrará automáticamente.")
-                # Si el taxi no está en memoria, asumimos que es nuevo y lo añadimos a la DB y memoria
-                # Esto es para manejar taxis que se registran directamente con el auth server sin pasar por el 'taxis_available'
-                initial_x, initial_y = 1, 1 # Asumimos posición inicial por defecto si no está en DB
+            # Imprimir posicion del taxi actual
+            print(f"Taxi {taxi_id} moviéndose a ({x}, {y}) con estado '{status}'")
+
+            # Crucial: Si el taxi no está en TAXI_FLEET, lo añade
+            if taxi_id not in TAXI_FLEET:
+                print(f"Central: Añadiendo dinámicamente Taxi {taxi_id} a la flota.")
                 TAXI_FLEET[taxi_id] = {
                     "x": x, "y": y, "status": status, "service_id": None,
                     "current_destination_coords": None,
-                    "initial_x": initial_x, "initial_y": initial_y # Se asume una inicial si no se conoce
+                    "initial_x": x, "initial_y": y # Asume la posición inicial al primer movimiento si no estaba en el archivo
                 }
-                update_taxi_in_db(taxi_id, x, y, status, None, None, initial_x, initial_y)
+
+            taxi = TAXI_FLEET[taxi_id]
+            taxi["x"] = x
+            taxi["y"] = y
+            taxi["status"] = status
+
+            # Si está yendo a recoger al cliente y ha llegado
+            if status == "moving_to_customer" and taxi["service_id"]:
+                client_id = taxi["service_id"]
+                # Asegurarse de que CUSTOMER_REQUESTS[client_id] exista y tenga 'origin_coords'
+                if client_id in CUSTOMER_REQUESTS and "origin_coords" in CUSTOMER_REQUESTS[client_id]:
+                    client_coords = CUSTOMER_REQUESTS[client_id]["origin_coords"]
+                    if (x, y) == (client_coords["x"], client_coords["y"]):
+                        destination_id = CUSTOMER_REQUESTS[client_id]["destination_id"]
+                        final_destination_coords = CITY_MAP[destination_id]
+                        print(f"Taxi {taxi_id} ha recogido al cliente {client_id} en ({x},{y}). Enviando comando para ir al destino final {destination_id} ({final_destination_coords['x']},{final_destination_coords['y']})")
+                        # Cambia el estado del taxi
+                        taxi["status"] = "moving_to_destination"
+                        taxi["current_destination_coords"] = final_destination_coords
+                        # Cambia el estado del cliente (opcional, para trazabilidad)
+                        CUSTOMER_REQUESTS[client_id]["status"] = "picked_up"
+                        # Manda comando para ir al destino
+                        taxi_command_msg = MessageProtocol.create_taxi_command(
+                            taxi_id=taxi_id, command="GOTO_DEST", new_destination_coords=final_destination_coords, client_id=client_id, final_destination_id=destination_id
+                        )
+                        send_central_update('taxi_commands', MessageProtocol.parse_message(taxi_command_msg))
+                else:
+                    print(f"Advertencia: No se encontró la solicitud o coordenadas de origen para el cliente {client_id} asignado al taxi {taxi_id}.")
 
 
-            if status == "free" and TAXI_FLEET[taxi_id].get("status_before_free") == "returning_to_base":
-                print(f"Taxi {taxi_id} ha llegado a su base y está libre.")
-                TAXI_FLEET[taxi_id]["service_id"] = None
-                TAXI_FLEET[taxi_id]["current_destination_coords"] = None
-                TAXI_FLEET[taxi_id]["status_before_free"] = None # Reset flag
-                update_taxi_in_db(
-                    taxi_id,
-                    TAXI_FLEET[taxi_id]["x"],
-                    TAXI_FLEET[taxi_id]["y"],
-                    TAXI_FLEET[taxi_id]["status"],
-                    TAXI_FLEET[taxi_id]["service_id"],
-                    TAXI_FLEET[taxi_id]["current_destination_coords"],
-                    TAXI_FLEET[taxi_id]["initial_x"],
-                    TAXI_FLEET[taxi_id]["initial_y"]
+            # Si está yendo al destino y ha llegado
+            elif status == "moving_to_destination" and taxi["current_destination_coords"] and \
+                 (x, y) == (taxi["current_destination_coords"]["x"], taxi["current_destination_coords"]["y"]):
+                client_id = taxi["service_id"]
+                # Notifica servicio completado
+                service_completed_msg = MessageProtocol.create_service_completed(
+                    client_id=client_id, taxi_id=taxi_id, destination_id=CUSTOMER_REQUESTS[client_id]["destination_id"]
                 )
-            elif status == "free":
-                TAXI_FLEET[taxi_id]["service_id"] = None
-                TAXI_FLEET[taxi_id]["current_destination_coords"] = None
-                update_taxi_in_db(
-                    taxi_id,
-                    TAXI_FLEET[taxi_id]["x"],
-                    TAXI_FLEET[taxi_id]["y"],
-                    TAXI_FLEET[taxi_id]["status"],
-                    TAXI_FLEET[taxi_id]["service_id"],
-                    TAXI_FLEET[taxi_id]["current_destination_coords"],
-                    TAXI_FLEET[taxi_id]["initial_x"],
-                    TAXI_FLEET[taxi_id]["initial_y"]
-                )
+                send_central_update('service_notifications', MessageProtocol.parse_message(service_completed_msg))
 
-            # Emit map update JSON in every movement
-            map_state_message = MessageProtocol.create_map_update(
-                city_map=copy.deepcopy(CITY_MAP),
-                taxi_fleet=copy.deepcopy(TAXI_FLEET),
-                customer_requests=copy.deepcopy(CUSTOMER_REQUESTS)
-            )
-            send_central_update('map_updates', MessageProtocol.parse_message(map_state_message))
+                # Cambia el estado del taxi y manda a base
+                taxi["status"] = "returning_to_base"
+                # Usa la posición inicial guardada o un valor por defecto si no está disponible
+                base_coords = {"x": taxi.get("initial_x", 0), "y": taxi.get("initial_y", 0)}
+                taxi["current_destination_coords"] = base_coords
+                taxi["service_id"] = None
+
+                taxi_command_msg = MessageProtocol.create_taxi_command(
+                    taxi_id=taxi_id, command="RETURN_TO_BASE", new_destination_coords=base_coords
+                )
+                send_central_update('taxi_commands', MessageProtocol.parse_message(taxi_command_msg))
+
+            # Si está volviendo a base y ha llegado
+            elif status == "returning_to_base" and taxi["current_destination_coords"] and \
+                 (x, y) == (taxi["current_destination_coords"]["x"], taxi["current_destination_coords"]["y"]):
+                taxi["status"] = "free" # Vuelve a estar libre, no "disabled"
+                taxi["service_id"] = None  # Limpia el ID de servicio
+                taxi["current_destination_coords"] = None
+            # else: # Comentado para evitar ruido en logs si el taxi no está en una de estas fases críticas
+            #     print(f"Advertencia: Movimiento de taxi no registrado: {taxi_id}")
 
 def process_sensor_data_messages():
     """Procesa los mensajes del tema 'sensor_data'."""
@@ -739,68 +778,50 @@ def generate_token():
 def handle_taxi_auth_client(conn, addr):
     """Maneja una conexión de socket entrante para autenticación de taxi."""
     print(f"Conexión de autenticación de taxi desde {addr}")
-    client_ip = addr[0]
     try:
         data = conn.recv(1024).decode('utf-8')
         if data:
             message = MessageProtocol.parse_message(data)
             if message.get("operation_code") == MessageProtocol.OP_AUTH_REQUEST:
-                taxi_id = str(message["data"].get("taxi_id"))
-                if taxi_id:
-                    # Comprobar si el taxi está registrado en la tabla 'taxis'
-                    conn_db = get_db_connection()
-                    cursor = conn_db.cursor()
-                    cursor.execute("SELECT taxi_id, x, y, status FROM taxis WHERE taxi_id = ?", (taxi_id,))
-                    taxi_data_db = cursor.fetchone()
-                    conn_db.close()
+                taxi_id = message["data"].get("taxi_id")
+                
+                # MODIFICACIÓN CLAVE: Añadir el taxi a TAXI_FLEET si no existe
+                if taxi_id not in TAXI_FLEET:
+                    print(f"Central: Registrando dinámicamente el Taxi {taxi_id} durante la autenticación.")
+                    # Asignar una posición inicial por defecto (0,0) o la que Central decida para nuevos taxis
+                    TAXI_FLEET[taxi_id] = {
+                        "x": 0, "y": 0, "status": "disconnected", "service_id": None,
+                        "current_destination_coords": None,
+                        "initial_x": 0, "initial_y": 0 # Guarda la posición inicial al registrarse
+                    }
 
-                    if taxi_data_db:
-                        # Taxi ya existe en la DB
-                        print(f"Central: Taxi {taxi_id} encontrado en la DB. Autenticando...")
-                        TAXI_FLEET[taxi_id] = { # Asegurar que esté en memoria
-                            "x": taxi_data_db["x"],
-                            "y": taxi_data_db["y"],
-                            "status": taxi_data_db["status"],
-                            "service_id": None, # Resetear estado de servicio al autenticarse
-                            "current_destination_coords": None,
-                            "initial_x": taxi_data_db["x"], # Mantener la posición actual como inicial
-                            "initial_y": taxi_data_db["y"]
-                        }
-                        # Generar token y guardarlo temporalmente
-                        token = generate_token()
-                        ACTIVE_TOKENS[taxi_id] = token
-                        response_msg = MessageProtocol.create_auth_response(
-                            taxi_id, MessageProtocol.STATUS_OK, token
-                        )
-                        log_audit_event("Taxi", client_ip, "AuthSuccess", f"Taxi {taxi_id} autenticado. Token: {token}")
-                        # El estado del taxi en la DB ya debería ser 'free' o similar al autenticarse
-                        # No es necesario forzar a "free" aquí, a menos que se quiera resetear el estado
-                        if TAXI_FLEET[taxi_id]["status"] == "disabled": # Si estaba deshabilitado, se pone en libre al reautenticarse
-                            TAXI_FLEET[taxi_id]["status"] = "free"
-                            update_taxi_in_db(taxi_id, TAXI_FLEET[taxi_id]["x"], TAXI_FLEET[taxi_id]["y"], "free", None, None, TAXI_FLEET[taxi_id]["initial_x"], TAXI_FLEET[taxi_id]["initial_y"])
-
-                        print(f"Taxi {taxi_id} autenticado y listo.")
-                    else:
-                        # Taxi NO REGISTRADO en la base de datos (EC_Registry no lo ha dado de alta)
-                        response_msg = MessageProtocol.create_auth_response(
-                            taxi_id, MessageProtocol.STATUS_KO, "Taxi no registrado en el sistema. Regístrese primero."
-                        )
-                        log_audit_event("Taxi", client_ip, "AuthFail", f"Taxi {taxi_id} intento de autenticación fallido: No registrado.")
-                        print(f"Fallo de autenticación para Taxi {taxi_id}: No registrado.")
-                else: # This handles cases where taxi_id is None or empty
+                # Ahora el taxi_id siempre existirá en TAXI_FLEET
+                if taxi_id is not None and taxi_id in TAXI_FLEET: # taxi_id is not None is redundant now but harmless
+                    # Generar token y guardarlo temporalmente
+                    token = generate_token()
+                    ACTIVE_TOKENS[taxi_id] = token
                     response_msg = MessageProtocol.create_auth_response(
-                        None, MessageProtocol.STATUS_KO, "ID de taxi no válido."
+                        taxi_id, MessageProtocol.STATUS_OK, token
                     )
-                    log_audit_event("Taxi", client_ip, "AuthFail", "Intento de autenticación fallido: ID de taxi no proporcionado")
-                    print(f"Fallo de autenticación: ID de taxi no válido.")
+                    log_audit_event("Taxi", addr[0], "AuthSuccess", f"Taxi {taxi_id} autenticado. Token: {token}")
+                    # Solo cambia el estado a 'free' si no estaba 'disabled'.
+                    # Si estaba 'disabled', su recuperación debe venir del sensor.
+                    if TAXI_FLEET[taxi_id]["status"] != "disabled":
+                        TAXI_FLEET[taxi_id]["status"] = "free"
+                    print(f"Taxi {taxi_id} autenticado y listo.")
+                else: # Esto ya no debería ocurrir si la lógica de adición dinámica funciona
+                    response_msg = MessageProtocol.create_auth_response(
+                        taxi_id, MessageProtocol.STATUS_KO, "ID de taxi no válido o no registrado inicialmente."
+                    )
+                    log_audit_event("Taxi", addr[0], "AuthFail", f"Intento de autenticación fallido para {taxi_id}")
+                    print(f"Fallo de autenticación para ID {taxi_id}: No válido.")
                 conn.sendall(response_msg.encode('utf-8'))
             else:
                 print(f"Mensaje de autenticación inesperado: {message}")
-                log_audit_event("Taxi", client_ip, "AuthError", f"Mensaje inesperado durante autenticación: {message}")
                 conn.sendall(MessageProtocol.create_auth_response(None, MessageProtocol.STATUS_KO, "Mensaje inválido").encode('utf-8'))
     except Exception as e:
         print(f"Error al manejar la autenticación del taxi: {e}")
-        log_audit_event("Taxi", client_ip, "AuthError", str(e))
+        log_audit_event("Taxi", addr[0], "AuthError", str(e))
     finally:
         conn.close()
         print(f"Conexión de autenticación de {addr} cerrada.")

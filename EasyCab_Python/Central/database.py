@@ -11,6 +11,8 @@ def initialize_database():
     Inicializa la base de datos SQLite, creando las tablas necesarias si no existen.
     Crea las tablas para taxis, clientes, ubicaciones y para el log de auditoría.
     """
+    print("Inicializando la base de datos SQLite...")
+    print(f"Archivo de base de datos: {DATABASE_FILE}")
     try:
         # Ensure the directory for the database file exists
         os.makedirs(os.path.dirname(DATABASE_FILE), exist_ok=True) # Esta línea crea la carpeta 'data' si no existe
@@ -88,4 +90,5 @@ def initialize_database():
 
 if __name__ == "__main__":
     initialize_database()
+    print("Base de datos inicializada correctamente.")
 
